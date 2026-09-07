@@ -71,11 +71,17 @@ export class TransactionService {
     }
   }
 
+  // Looks up an existing record by paymentRef (case/whitespace-normalized,
+  // matching how it's stored below). Returns the record itself rather than
+  // a boolean so the caller can tell "already recorded for THIS user"
+  // (idempotent replay — fine) apart from "claimed by a DIFFERENT user"
+  // (a real conflict) — see transactionRecords() below.
+  static async findByPaymentRef(paymentRef: string): Promise<ITransactionRecord | null> {
+    return TransactionRecord.findOne({ paymentRef: paymentRef.trim().toLowerCase() });
+  }
+
   static async paymentRefAlreadyExists(paymentRef: string): Promise<boolean> {
-    const count = await TransactionRecord.countDocuments({
-      paymentRef: paymentRef.trim().toLowerCase(),
-    });
-    return count > 0;
+    return (await this.findByPaymentRef(paymentRef)) !== null;
   }
 
   static async transactionRecords(
@@ -112,13 +118,30 @@ export class TransactionService {
       paymentRef = transactionVM.paymentRef!;
     }
 
-    if (await this.paymentRefAlreadyExists(paymentRef)) {
-      throw new CustomException('A payment with the same payment reference already exists.');
-    }
-
-    const existingRecord = await TransactionRecord.findOne({ appUserId });
-    if (existingRecord) {
-      throw new CustomException('A record exists with this user id.');
+    // A user can legitimately submit more than one transaction over their
+    // lifetime — resubscribing after a lapse/cancellation, a plan change,
+    // even a retried request. What actually needs guarding against is the
+    // SAME purchase token being claimed by a DIFFERENT user, or processed
+    // as a brand-new record twice. This used to reject any user's second
+    // transaction outright ("A record exists with this user id"), which
+    // meant nobody could ever resubscribe or restore a purchase server-side
+    // after their very first one — including during Play Console License
+    // Testing, where test purchases auto-expire/cancel quickly specifically
+    // so testers can repeat this.
+    const existingByRef = await this.findByPaymentRef(paymentRef);
+    if (existingByRef) {
+      if (existingByRef.appUserId !== appUserId) {
+        throw new CustomException('This purchase is already associated with a different account.');
+      }
+      // Same user, same token, already on file — idempotent replay (e.g. a
+      // restore-purchases call, or the client retrying after a timeout on
+      // a response that actually landed). Re-run entitlement in case the
+      // first attempt saved the record but didn't finish granting it, but
+      // don't create a duplicate record.
+      if (status === TRANSACTION_STATUS.Completed) {
+        return this.grantEntitlement(existingByRef);
+      }
+      return AppUserService.getAppUserResponse(appUserId);
     }
 
     const transaction = new TransactionRecord({
