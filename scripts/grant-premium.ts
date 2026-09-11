@@ -2,8 +2,7 @@ import mongoose from 'mongoose';
 import AppUser from '../src/models/AppUser';
 
 const EMAILS: string[] = [
-  'jnrdev01@gmail.com',
-  'akoduashiyat@gmail.com'
+  'email'
 ];
 
 async function main() {
