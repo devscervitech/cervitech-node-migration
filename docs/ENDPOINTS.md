@@ -69,7 +69,6 @@ Base URL: `/api/v1`
 - GET `/:id` — `UserController.fetch_user_profile`
 - PUT `/` — auth required — `UserController.updateUser`
 - PUT `/picture` — auth required — `UserController.updatePictureUrl` — body: `pictureUrl`
-- PUT `/subscription` — auth required — `UserController.updateSubscription`
 - PUT `/toggle-push-notification` — auth required — `UserController.toggleAllowPushNotifications`
 - PUT `/fcm-token` — auth required — `UserController.updateFCMToken` — body: `fcmToken`
 - POST `/logout` — auth required — `AuthController.logout`

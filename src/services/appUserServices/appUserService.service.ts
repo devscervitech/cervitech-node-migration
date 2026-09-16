@@ -1,7 +1,6 @@
 import AppUser, { IAppUser } from '../../models/AppUser';
 import ResponseRate from '../../models/ResponseRate';
 import { PictureUrlUpdateViewModel } from '../../viewmodels/PictureUrlUpdateViewModel';
-import { SubscriptionUpdateViewModel } from '../../viewmodels/SubscriptionUpdateViewModel';
 import { AppUserResponse, ResponseRateViewModel } from '../../viewmodels/ResponseRateViewModel';
 import { Activity } from '../../viewmodels/Activity';
 import { CustomException } from '../../utils/customException';

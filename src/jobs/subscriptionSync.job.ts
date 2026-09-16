@@ -34,31 +34,53 @@ export const startSubscriptionSyncJob = () => {
         purchaseToken: { $exists: true, $ne: null },
       });
 
-      let revoked = 0;
+      // Grouped per user because a user can now have more than one
+      // transaction record over their lifetime (resubscriptions, plan
+      // changes, restores — see transaction.service.ts). Revoking on the
+      // first not-entitled record seen would incorrectly strip hasPaid from
+      // someone with a valid CURRENT subscription just because an old,
+      // already-superseded record of theirs has since expired.
+      const recordsByUser = new Map<string, typeof records>();
       for (const record of records) {
-        try {
-          const verification = await GooglePlayService.verifySubscriptionPurchase({
-            packageName: record.packageName!,
-            subscriptionId: record.subscriptionId!,
-            purchaseToken: record.purchaseToken!,
-          });
+        const bucket = recordsByUser.get(record.appUserId) ?? [];
+        bucket.push(record);
+        recordsByUser.set(record.appUserId, bucket);
+      }
 
-          if (verification.status !== 'entitled') {
-            await AppUser.updateOne({ _id: record.appUserId }, { $set: { hasPaid: false } });
-            revoked += 1;
-            logger.info(
-              `Revoked hasPaid for user ${record.appUserId} (subscription ${verification.status}).`
-            );
+      let revoked = 0;
+      for (const [appUserId, userRecords] of recordsByUser) {
+        let anyEntitled = false;
+        let verificationFailed = false;
+
+        for (const record of userRecords) {
+          try {
+            const verification = await GooglePlayService.verifySubscriptionPurchase({
+              packageName: record.packageName!,
+              subscriptionId: record.subscriptionId!,
+              purchaseToken: record.purchaseToken!,
+            });
+            if (verification.status === 'entitled') anyEntitled = true;
+          } catch (error) {
+            // Can't confirm this record's state — don't let a transient
+            // Play API failure count as "not entitled" and risk revoking a
+            // real subscriber. See the outer catch: this just means this
+            // user is skipped for this run, not incorrectly revoked.
+            verificationFailed = true;
+            logger.error(`Failed to re-verify a subscription record for user ${appUserId}`, {
+              error: error instanceof Error ? error.message : String(error),
+            });
           }
-        } catch (error) {
-          logger.error(`Failed to re-verify subscription for user ${record.appUserId}`, {
-            error: error instanceof Error ? error.message : String(error),
-          });
+        }
+
+        if (!anyEntitled && !verificationFailed) {
+          await AppUser.updateOne({ _id: appUserId }, { $set: { hasPaid: false } });
+          revoked += 1;
+          logger.info(`Revoked hasPaid for user ${appUserId} (no remaining entitled subscription).`);
         }
       }
 
       logger.info(
-        `Subscription sync job completed. ${revoked} user(s) revoked out of ${records.length} checked.`
+        `Subscription sync job completed. ${revoked} user(s) revoked out of ${recordsByUser.size} checked.`
       );
     } catch (error) {
       logger.error('Subscription sync job failed', {

@@ -1,10 +1,36 @@
+/**
+ * One-time script to comp specific users into premium without a payment.
+ *
+ * What it does:
+ *   - Looks up AppUser documents by email
+ *   - Sets hasPaid = true
+ *   - Prints a summary of who was updated, and who was NOT found
+ *
+ * It does NOT create a TransactionRecord — this is a manual override, not a
+ * purchase. If you later add subscription-sync/expiry logic that revokes
+ * hasPaid based on TransactionRecord state, these comped users will be
+ * exempt from that (nothing to revoke), which is what you want for a
+ * permanent comp. If you want a comp that expires, tell me and I'll adjust.
+ *
+ * Usage:
+ *   1. Edit the EMAILS list below.
+ *   2. Run against the right environment:
+ *        npx dotenv -e .env.dev    -- npx tsx scripts/grant-premium.ts
+ *        npx dotenv -e .env.staging -- npx tsx scripts/grant-premium.ts
+ *        npx dotenv -e .env.prod   -- npx tsx scripts/grant-premium.ts
+ *      (matches how your existing `dev`/`stage`/`prod` npm scripts load env)
+ *   3. Read the printed summary before closing the terminal.
+ */
+
 import mongoose from 'mongoose';
 import AppUser from '../src/models/AppUser';
 
+// ---- EDIT THIS LIST ----
 const EMAILS: string[] = [
   'someone@example.com',
   'another@example.com',
 ];
+// -------------------------
 
 async function main() {
   const MONGODB_URI = process.env.MONGODB_URI;
