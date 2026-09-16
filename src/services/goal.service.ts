@@ -104,27 +104,59 @@ export class GoalService {
     appUserId: string,
   ): Promise<GoalCycleReportViewModel[]> {
     try {
-      const goals = await Goal.findOne({ appUserId }).sort({ dateSet: -1 }).exec();
-      if (!goals || !goals.goalCycleCompletionReports || goals.goalCycleCompletionReports.length === 0) {
-        return [];
-      }
+      // Reads from the GoalCycleCompletionReport collection directly, keyed
+      // by goalId — NOT `goal.goalCycleCompletionReports` (the embedded
+      // array on the Goal document). Those are two different places and
+      // only one of them is actually kept up to date:
+      // runGoalCycleSummary() (src/services/goalCycleSummary.service.ts),
+      // the real ongoing job that concludes a cycle and records its
+      // compliance every day/week, saves each report as its own
+      // GoalCycleCompletionReport document (see its `goalId: goal._id`) —
+      // it never touches the embedded array. That array is only ever
+      // seeded once, at turnOnGoalAsync time, from whatever the client
+      // happened to submit when the goal was first turned on. Reading it
+      // here meant every real cycle the job concluded was invisible to
+      // this endpoint, forever — this is what "goal history" showing
+      // nothing (or a permanently frozen snapshot) actually was.
+      //
+      // This is also the same collection `computeNeckAngleParameters()`
+      // (src/services/appUserServices/neckAngle.service.ts) already reads
+      // for the "current goal compliance" figure shown on Home/Stats/Goal —
+      // that one was correct; this is what brings history in line with it.
+      //
+      // Querying by ALL of the user's Goal IDs (not just their newest goal)
+      // also fixes a second, related gap: a user who ever turned their
+      // goal off/on again, or changed their target angle, got a new Goal
+      // document each time — under the old `Goal.findOne(...)` (newest
+      // only) lookup, every concluded cycle recorded against an earlier
+      // Goal document became permanently unreachable from this endpoint
+      // the moment a newer one existed, even though the data was still
+      // sitting right there in the database.
+      const goals = await Goal.find({ appUserId }).lean().exec();
+      if (!goals || goals.length === 0) return [];
 
-      const reports: GoalCycleReportViewModel[] = [];
+      const goalById = new Map(goals.map((g: any) => [g._id.toString(), g]));
+      const goalIds = goals.map((g: any) => g._id);
 
-      let counter = 1;
-      for (const report of goals.goalCycleCompletionReports) {
-        reports.push({
-          id: counter++,
-          appUserId: goals.appUserId,
-          frequency: goals.frequency,
-          targetedAverageNeckAngle: goals.targetedAverageNeckAngle,
-          actualAverageNeckAngle: Math.round(report.actualAverageNeckAngle * 10) / 10,
-          complianceInPercentage: Math.round(report.complianceInPercentage * 10) / 10,
+      const cycleReports = await GoalCycleCompletionReport.find({ goalId: { $in: goalIds } })
+        .sort({ dateOfConcludedCycle: -1 })
+        .lean()
+        .exec();
+
+      const reports: GoalCycleReportViewModel[] = cycleReports.map((report: any, index: number) => {
+        const goal = goalById.get(report.goalId?.toString() ?? '');
+        return {
+          id: index + 1,
+          appUserId,
+          frequency: goal?.frequency ?? '',
+          targetedAverageNeckAngle: goal?.targetedAverageNeckAngle ?? 0,
+          actualAverageNeckAngle: Math.round((report.actualAverageNeckAngle ?? 0) * 10) / 10,
+          complianceInPercentage: Math.round((report.complianceInPercentage ?? 0) * 10) / 10,
           dateOfConcludedCycle: report.dateOfConcludedCycle,
-          dayOfConcludedCycle: report.dayOfConcludedCycle,
-          colorTag: Utils.getColorTag(report.complianceInPercentage),
-        });
-      }
+          dayOfConcludedCycle: DateLibrary.formatDay(report.dateOfConcludedCycle?.toString() ?? ''),
+          colorTag: Utils.getColorTag(report.complianceInPercentage ?? 0),
+        };
+      });
 
       return reports;
     } catch (error: any) {

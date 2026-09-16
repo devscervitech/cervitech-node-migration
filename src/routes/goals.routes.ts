@@ -96,7 +96,7 @@ router.put('/turn-off', authenticateJWT, GoalController.turnOffGoalByUserId);
  *       - bearerAuth: []
  *     responses:
  *       200:
- *         description: Goals found
+ *         description: Goals found (an empty array is a normal result — e.g. no concluded cycles yet)
  *         content:
  *           application/json:
  *             schema:
@@ -129,8 +129,6 @@ router.put('/turn-off', authenticateJWT, GoalController.turnOffGoalByUserId);
  *                         type: string
  *       401:
  *         description: Not authenticated
- *       404:
- *         description: No goals found for this user
  */
 router.get('/user-goals', authenticateJWT, GoalController.getGoalsByUserId);
 
