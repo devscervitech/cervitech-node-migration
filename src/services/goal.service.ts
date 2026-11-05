@@ -12,16 +12,14 @@ import { AppUserService } from './appUserService.service';
 import { PushNotificationModelDTO } from '../dtos/PushNotificationModelDTO';
 import { GoalCycleCompletionReport } from '../models/GoalCycleCompletionReport';
 
-
 export class GoalService {
-
   static async turnOnGoalAsync(model: SetGoalViewModel): Promise<boolean> {
     try {
       const user = await AppUser.findById(model.appUserId);
-      console.log("appUserId:", model.appUserId, typeof model.appUserId);
+      console.log('appUserId:', model.appUserId, typeof model.appUserId);
 
       if (!user) throw new CustomException('User does not exist');
-      
+
       // Save each GoalCycleCompletionReport individually
       const savedReports = await Promise.all(
         model.goalCycleCompletionReports.map(async (report) => {
@@ -35,14 +33,17 @@ export class GoalService {
       );
 
       const goal = new Goal({
-        appUserId: model.appUserId,
         targetedAverageNeckAngle: model.targetedAverageNeckAngle,
         frequency: model.frequency,
         dateSet: DateLibrary.getCurrentDateTime(),
-        goalCycleCompletionReports: model.goalCycleCompletionReports
+        goalCycleCompletionReports: model.goalCycleCompletionReports,
       });
+
+      // Preserve appUserId even though it is not declared in GoalSchema.
+      goal.set('appUserId', model.appUserId, { strict: false });
+
       await goal.save();
-      
+
       user.isGoalOn = true;
       await user.save();
 
@@ -72,11 +73,17 @@ export class GoalService {
     }
   }
 
-  static async getAllGoalsByIdAsync(model: TurnOnGoalViewModel): Promise<GoalCycleReportViewModel[]> {
+  static async getAllGoalsByIdAsync(
+    model: TurnOnGoalViewModel
+  ): Promise<GoalCycleReportViewModel[]> {
     try {
-      const goals = await Goal.findById(model.appUserId);
+      const goals = await Goal.find({
+        appUserId: model.appUserId,
+      }).exec();
 
-      if (!goals.length) {return []};
+      if (!goals.length) {
+        return [];
+      }
 
       const reports: GoalCycleReportViewModel[] = [];
 
@@ -130,7 +137,7 @@ export class GoalService {
           await PushNotificationDriver.sendPushNotification(model);
         },
         null, // onComplete
-        true  // start immediately
+        true // start immediately
       );
       return true;
     } catch (error: any) {
@@ -148,9 +155,17 @@ export class GoalService {
     const jobId = `userid-${userId}`;
     const cronTime = frequency === 'DAILY' ? '*/5 * * * *' : '*/10 * * * *';
 
-    new CronJob(cronTime, () => {
-      AppUserService.calculateAverageOfLastWeekOrDay(userId, frequency, dateSet, goalId);
-    }, null, true, undefined, undefined, false);
+    new CronJob(
+      cronTime,
+      () => {
+        AppUserService.calculateAverageOfLastWeekOrDay(userId, frequency, dateSet, goalId);
+      },
+      null,
+      true,
+      undefined,
+      undefined,
+      false
+    );
   }
 
   private removeScheduledJob(userId: string): void {

@@ -8,7 +8,7 @@ export class GoalController {
     const model: SetGoalViewModel = req.body;
 
     if (!model || !model.appUserId) {
-      res.status(400).json({ error: "Goal data with valid user ID is required." });
+      res.status(400).json({ error: 'Goal data with valid user ID is required.' });
       return;
     }
 
@@ -16,14 +16,14 @@ export class GoalController {
       const result = await GoalService.turnOnGoalAsync(model);
 
       if (!result) {
-        res.status(400).json({ error: "Failed to turn on goal." });
+        res.status(400).json({ error: 'Failed to turn on goal.' });
         return;
       }
 
       res.status(201).json(result);
     } catch (error) {
-      logger.error("Error turning on goal:", error);
-      res.status(500).json({ error: "Internal server error" });
+      logger.error('Error turning on goal:', error);
+      res.status(500).json({ error: 'Internal server error' });
     }
   }
 
@@ -31,7 +31,7 @@ export class GoalController {
     const model: TurnOnGoalViewModel = req.body;
 
     if (!model || !model.appUserId) {
-      res.status(400).json({ error: "Goal data with valid user ID is required." });
+      res.status(400).json({ error: 'Goal data with valid user ID is required.' });
       return;
     }
 
@@ -39,14 +39,14 @@ export class GoalController {
       const result = await GoalService.turnOffGoalAsync(model);
 
       if (!result) {
-        res.status(400).json({ error: "Failed to turn off goal." });
+        res.status(400).json({ error: 'Failed to turn off goal.' });
         return;
       }
 
       res.status(200).json(result);
     } catch (error) {
-      logger.error("Error turning off goal:", error);
-      res.status(500).json({ error: "Internal server error" });
+      logger.error('Error turning off goal:', error);
+      res.status(500).json({ error: 'Internal server error' });
     }
   }
 
@@ -54,30 +54,31 @@ export class GoalController {
     const model: TurnOnGoalViewModel = req.body;
 
     if (!model || !model.appUserId) {
-      res.status(400).json({ error: "User ID is required to fetch goals." });
+      res.status(400).json({ error: 'User ID is required to fetch goals.' });
       return;
     }
 
     try {
       const result = await GoalService.getAllGoalsByIdAsync(model);
 
-      if (!result || result.length === 0) {
-        res.status(404).json({ error: "No goals found for this user." });
-        return;
-      }
-
-      res.status(200).json(result);
+      res.status(200).json({
+        success: true,
+        data: result ?? [],
+      });
     } catch (error) {
-      logger.error("Error fetching goals by user ID:", error);
-      res.status(500).json({ error: "Internal server error" });
+      logger.error('Error fetching goals by user ID:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Internal server error',
+      });
     }
   }
 
   static async getCurrentTargetedAverageNeckAngle(req: Request, res: Response): Promise<void> {
     const userId = req.query.userid as string;
 
-    if (!userId || userId.trim() === "") {
-      res.status(400).json({ error: "Valid user ID is required." });
+    if (!userId || userId.trim() === '') {
+      res.status(400).json({ error: 'Valid user ID is required.' });
       return;
     }
 
@@ -85,14 +86,14 @@ export class GoalController {
       const result = await GoalService.getCurrentTargetedAverageNeckAngleAsync(userId);
 
       if (result === null || result === undefined) {
-        res.status(404).json({ error: "No neck angle data found for this user." });
+        res.status(404).json({ error: 'No neck angle data found for this user.' });
         return;
       }
 
       res.status(200).json(result);
     } catch (error) {
-      logger.error("Error fetching neck angle data:", error);
-      res.status(500).json({ error: "Internal server error" });
+      logger.error('Error fetching neck angle data:', error);
+      res.status(500).json({ error: 'Internal server error' });
     }
   }
 }
