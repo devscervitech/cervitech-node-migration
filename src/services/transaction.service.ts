@@ -77,7 +77,7 @@ export class TransactionService {
   // (idempotent replay — fine) apart from "claimed by a DIFFERENT user"
   // (a real conflict) — see transactionRecords() below.
   static async findByPaymentRef(paymentRef: string): Promise<ITransactionRecord | null> {
-    return TransactionRecord.findOne({ paymentRef: paymentRef.trim().toLowerCase() });
+    return TransactionRecord.findOne({ paymentRef: paymentRef.trim() });
   }
 
   static async paymentRefAlreadyExists(paymentRef: string): Promise<boolean> {
@@ -108,14 +108,7 @@ export class TransactionService {
       status = this.mapPlayStatusToTransactionStatus(verification.status);
       paymentRef = transactionVM.purchaseToken;
     } else {
-      // Legacy path: no purchase token, so the client-submitted status is
-      // trusted as-is. Still pending frontend coordination on migrating
-      // fully to purchase tokens (see #08's ticket notes).
-      logger.warn('Recording transaction without Play verification; status is client-submitted.', {
-        appUserId,
-      });
-      status = this.parseTransactionStatus(transactionVM.status);
-      paymentRef = transactionVM.paymentRef!;
+      throw new CustomException('A verified Google Play purchase token is required.');
     }
 
     // A user can legitimately submit more than one transaction over their
@@ -133,6 +126,8 @@ export class TransactionService {
       if (existingByRef.appUserId !== appUserId) {
         throw new CustomException('This purchase is already associated with a different account.');
       }
+      existingByRef.status = status;
+      await existingByRef.save();
       // Same user, same token, already on file — idempotent replay (e.g. a
       // restore-purchases call, or the client retrying after a timeout on
       // a response that actually landed). Re-run entitlement in case the
@@ -156,7 +151,14 @@ export class TransactionService {
       subscriptionId: transactionVM.subscriptionId,
     });
 
-    await transaction.save();
+    try {
+      await transaction.save();
+    } catch (error: any) {
+      if (error?.code !== 11000) throw error;
+      // Another request won the unique-index race. Reuse its record and
+      // enforce ownership through the same verified replay path.
+      return this.transactionRecords(appUserId, transactionVM);
+    }
 
     if (status === TRANSACTION_STATUS.Completed) {
       return this.grantEntitlement(transaction);
