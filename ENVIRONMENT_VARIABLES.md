@@ -241,3 +241,5 @@ Used for logging and UI indication of environment status.
 - Never commit `.env` to version control
 - Use strong, unique values for all secrets
 - Rotate secrets regularly in production
+
+Google Play payments require `GOOGLE_PLAY_SUBSCRIPTION_IDS`: a comma-separated allowlist of subscription product IDs. Legacy status-only payment submissions are rejected. Existing duplicate paymentRef records must be reconciled before creating the unique paymentRef index in production.
