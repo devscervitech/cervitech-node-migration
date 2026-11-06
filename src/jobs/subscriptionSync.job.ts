@@ -2,6 +2,8 @@ import cron from 'node-cron';
 import TransactionRecord from '../models/TransactionRecord';
 import AppUser from '../models/AppUser';
 import { GooglePlayService } from '../services/googlePlay.service';
+import { TransactionService } from '../services/transaction.service';
+import { TRANSACTION_STATUS } from '../enums/transaction';
 import { logger } from '../utils/logger';
 
 // #09: keeps hasPaid accurate after the initial purchase.
@@ -18,7 +20,7 @@ import { logger } from '../utils/logger';
 // that requires polling `purchases.voidedpurchases.list` separately, which
 // is out of scope here since it wasn't in the ticket's checklist.
 export const startSubscriptionSyncJob = () => {
-  const schedule = '0 4 * * *'; // daily at 4AM UTC
+  const schedule = '*/15 * * * *'; // Reconcile pending and completed purchases every 15 minutes
 
   cron.schedule(schedule, async () => {
     if (!GooglePlayService.isConfigured()) {
@@ -30,7 +32,6 @@ export const startSubscriptionSyncJob = () => {
 
     try {
       const records = await TransactionRecord.find({
-        entitlementGranted: true,
         purchaseToken: { $exists: true, $ne: null },
       });
 
@@ -59,7 +60,19 @@ export const startSubscriptionSyncJob = () => {
               subscriptionId: record.subscriptionId!,
               purchaseToken: record.purchaseToken!,
             });
-            if (verification.status === 'entitled') anyEntitled = true;
+            record.status = verification.status === 'entitled' ? TRANSACTION_STATUS.Completed
+              : verification.status === 'pending' ? TRANSACTION_STATUS.Pending : TRANSACTION_STATUS.Failed;
+            await record.save();
+            if (verification.status === 'entitled') {
+              anyEntitled = true;
+              if (!record.entitlementGranted) {
+                await TransactionService.transactionRecords(appUserId, {
+                  amount: record.amount, transDate: record.transDate,
+                  purchaseToken: record.purchaseToken, packageName: record.packageName,
+                  subscriptionId: record.subscriptionId,
+                });
+              }
+            }
           } catch (error) {
             // Can't confirm this record's state — don't let a transient
             // Play API failure count as "not entitled" and risk revoking a
