@@ -96,7 +96,8 @@ router.put('/turn-off', authenticateJWT, GoalController.turnOffGoalByUserId);
  *       - bearerAuth: []
  *     responses:
  *       200:
- *         description: Goals found
+ *         description: git status --short
+ * git status --shortGoals found, or an empty array when no completed goal history exists
  *         content:
  *           application/json:
  *             schema:
@@ -129,8 +130,6 @@ router.put('/turn-off', authenticateJWT, GoalController.turnOffGoalByUserId);
  *                         type: string
  *       401:
  *         description: Not authenticated
- *       404:
- *         description: No goals found for this user
  */
 router.get('/user-goals', authenticateJWT, GoalController.getGoalsByUserId);
 

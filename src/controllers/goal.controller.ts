@@ -108,12 +108,10 @@ export class GoalController {
     try {
       const result = await GoalService.getAllGoalsByIdAsync(appUserId);
 
-      if (!result || result.length === 0) {
-        res.status(404).json({ error: 'No goals found for this user.' });
-        return;
-      }
-
-      res.status(200).json({ success: true, data: result });
+      res.status(200).json({
+        success: true,
+        data: result ?? [],
+      });
     } catch (error) {
       logger.error('Error fetching goals by user ID:');
       res.status(500).json({ error: 'Internal server error' });
