@@ -55,13 +55,9 @@ router.get('/:id', authenticateJWT, TransactionController.getTransactionRecordBy
  *     tags: [Transaction]
  *     summary: Create a transaction record for the authenticated user
  *     description: >
- *       Two ways to submit: (1) a Play purchase -- send `purchaseToken`,
- *       `packageName`, and `subscriptionId`; the backend verifies the
- *       purchase against the Android Publisher API and derives `status`
- *       from Google's response, ignoring any client-submitted status. (2)
- *       Legacy -- send `paymentRef` and `status` directly (not independently
- *       verified). `status: 1` (Completed) grants `hasPaid` on the caller's
- *       account in the same request.
+ *       Requires purchaseToken, packageName, and subscriptionId. The backend
+ *       verifies the configured package and allowed product with Google Play.
+ *       Client status and paymentRef never authorize access. Amount must be positive.
  *     security:
  *       - bearerAuth: []
  *     requestBody:
