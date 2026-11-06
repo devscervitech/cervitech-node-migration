@@ -96,8 +96,7 @@ router.put('/turn-off', authenticateJWT, GoalController.turnOffGoalByUserId);
  *       - bearerAuth: []
  *     responses:
  *       200:
- *         description: git status --short
- * git status --shortGoals found, or an empty array when no completed goal history exists
+ *         description: Goals found, or an empty array when no completed goal history exists
  *         content:
  *           application/json:
  *             schema:
