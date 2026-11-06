@@ -23,7 +23,7 @@ export class GooglePlayService {
   private static authClient: InstanceType<typeof google.auth.GoogleAuth> | null = null;
 
   static isConfigured(): boolean {
-    return Boolean(process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_KEY && process.env.GOOGLE_PLAY_PACKAGE_NAME);
+    return Boolean(process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_KEY && process.env.GOOGLE_PLAY_PACKAGE_NAME && process.env.GOOGLE_PLAY_SUBSCRIPTION_IDS);
   }
 
   private static getAuth() {
@@ -63,6 +63,15 @@ export class GooglePlayService {
     subscriptionId: string;
     purchaseToken: string;
   }): Promise<PlaySubscriptionVerification> {
+    const expectedPackage = process.env.GOOGLE_PLAY_PACKAGE_NAME;
+    const allowedProducts = (process.env.GOOGLE_PLAY_SUBSCRIPTION_IDS ?? '')
+      .split(',').map(value => value.trim()).filter(Boolean);
+    if (!expectedPackage || !allowedProducts.length) {
+      throw new Error('Google Play package and subscription allowlist must be configured.');
+    }
+    if (params.packageName !== expectedPackage || !allowedProducts.includes(params.subscriptionId)) {
+      throw new CustomException('Unsupported Google Play package or subscription.');
+    }
     const client = this.getClient();
 
     let data: androidpublisher_v3.Schema$SubscriptionPurchaseV2;
@@ -90,7 +99,10 @@ export class GooglePlayService {
       throw new Error('Play purchase verification request failed.');
     }
 
-    const expiryTimeMillis = (data.lineItems ?? []).reduce<number | null>((latest, item) => {
+    if (!(data.lineItems ?? []).some(item => item.productId === params.subscriptionId)) {
+      throw new CustomException('Purchase does not match the requested subscription.');
+    }
+    const expiryTimeMillis = (data.lineItems ?? []).filter(item => item.productId === params.subscriptionId).reduce<number | null>((latest, item) => {
       if (!item.expiryTime) return latest;
       const t = new Date(item.expiryTime).getTime();
       if (Number.isNaN(t)) return latest;
