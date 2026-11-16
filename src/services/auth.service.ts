@@ -32,7 +32,6 @@ import { toAppUserViewModel } from '../viewmodels/AppUser.viewmodel.js';
 
 export class AuthService {
   static async signup(data: SignupRequest): Promise<SignupResponse> {
-    console.log('Data', data);
 
     const validationError = AuthValidation.signupValidation(data);
     if (validationError) {
