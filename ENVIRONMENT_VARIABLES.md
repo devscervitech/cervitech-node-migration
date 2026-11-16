@@ -243,3 +243,9 @@ Used for logging and UI indication of environment status.
 - Rotate secrets regularly in production
 
 Google Play payments require `GOOGLE_PLAY_SUBSCRIPTION_IDS`: a comma-separated allowlist of subscription product IDs. Legacy status-only payment submissions are rejected. Existing duplicate paymentRef records must be reconciled before creating the unique paymentRef index in production.
+
+### UTC date handling rollout
+
+New goal `dateSet` and compliance `dateOfConcludedCycle` values store the actual instant. Goal cycles, dashboard day/week boundaries, response-rate hourly buckets, and cron schedules use UTC. Calendar weeks start Monday; monthly charts retain a sixth partial week where present.
+
+Do not bulk-subtract one hour from historical timestamps: the old helper depended on the writer's host timezone. Leave existing values unchanged until deployment history and independent creation timestamps identify affected records. For records proven to have been written on UTC hosts by the old helper, a one-hour correction may be appropriate; review associated cycle boundaries and completed reports together before applying a backed-up, audited migration. Other host timezones require reconstructing the actual offset. Never move completed cycles or resend notifications automatically as part of this deployment.
