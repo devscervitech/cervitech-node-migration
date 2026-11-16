@@ -1,3 +1,5 @@
+import AppUser from '../models/AppUser';
+import { Utils } from '../utils/utils';
 // user.controller.ts
 import { Request, Response } from 'express';
 import { AutomatePostNeckAngleRecordsViewModel } from '../viewmodels/AutomatePostNeckAngleRecords';
@@ -147,7 +149,6 @@ export class NeckAngleController {
 
   static async getUsersForTesting(req: Request, res: Response): Promise<void> {
     try {
-      const { default: AppUser } = await import('../models/AppUser');
       const users = await AppUser.find({}, { _id: 1, username: 1, email: 1, fcmToken: 1 }).limit(
         10
       );
@@ -182,7 +183,6 @@ export class NeckAngleController {
     }
 
     try {
-      const { Utils } = await import('../utils/utils');
       const report = Utils.currentDayAverageNeckAngleTextReport(Number(neckAngle));
 
       res.status(200).json({
