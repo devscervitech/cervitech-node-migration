@@ -34,7 +34,7 @@ export const AuthController = {
       logger.info('User signed up successfully', { email: body.email });
       return sendSuccess(res, result.data, result.message, 201);
     } catch (err: any) {
-      logger.error('User signup failed (unexpected)', { error: err.message });
+      logger.error('User signup failed (unexpected)', { error: err });
       return sendError(res, 500, 'Internal server error during signup');
     }
   },
@@ -67,7 +67,7 @@ export const AuthController = {
       logger.info('Authentication successful', { emailOrUsername: body.emailOrUsername });
       return sendSuccess(res, result.data, result.message, 200);
     } catch (err: any) {
-      logger.error('Authentication failed (unexpected)', { error: err.message });
+      logger.error('Authentication failed (unexpected)', { error: err });
       return sendError(res, 500, 'Internal server error during authentication');
     }
   },
@@ -89,7 +89,7 @@ export const AuthController = {
       if (!result.success) return sendError(res, 400, result.message);
       return sendSuccess(res, undefined, result.message, 200);
     } catch (err: any) {
-      logger.error('Logout failed', { error: err.message });
+      logger.error('Logout failed', { error: err });
       return sendError(res, 500, 'Internal server error during logout');
     }
   },
@@ -113,7 +113,7 @@ export const AuthController = {
 
       return sendSuccess(res, undefined, result.message, 200);
     } catch (err: any) {
-      logger.error('Password change failed', { error: err.message });
+      logger.error('Password change failed', { error: err });
       return sendError(res, 500, 'Internal server error during logout');
     }
   },
@@ -131,7 +131,7 @@ export const AuthController = {
 
       return sendSuccess(res, data, result.message, 200);
     } catch (err: any) {
-      logger.error('SendPasswordToken failed', { error: err.message });
+      logger.error('SendPasswordToken failed', { error: err });
       return sendError(res, 500, 'Internal server error');
     }
   },
@@ -150,7 +150,7 @@ export const AuthController = {
 
       return sendSuccess(res, { token: result.token }, result.message, 200);
     } catch (err: any) {
-      logger.error('VerifyResetOtp failed', { error: err.message });
+      logger.error('VerifyResetOtp failed', { error: err });
       return sendError(res, 500, 'Internal server error');
     }
   },
@@ -172,7 +172,7 @@ export const AuthController = {
 
       return sendSuccess(res, undefined, result.message, 200);
     } catch (err: any) {
-      logger.error('ResetPassword failed', { error: err.message });
+      logger.error('ResetPassword failed', { error: err });
       return sendError(res, 400, err.message);
     }
   },
@@ -188,7 +188,7 @@ export const AuthController = {
       const exists = await AuthService.usernameAlreadyExists(username);
       return res.status(200).json({ exists });
     } catch (err: any) {
-      logger.error('usernameAlreadyExists failed', { error: err.message });
+      logger.error('usernameAlreadyExists failed', { error: err });
       return sendError(res, 500, err.message);
     }
   },
@@ -205,7 +205,7 @@ export const AuthController = {
       const isValid = await AuthService.isValidEmail(email);
       return res.status(200).json({ isValid });
     } catch (err: any) {
-      logger.error('isValidEmail failed', { error: err.message });
+      logger.error('isValidEmail failed', { error: err });
       return sendError(res, 500, err.message);
     }
   },
