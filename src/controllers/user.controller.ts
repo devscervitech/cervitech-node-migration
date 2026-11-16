@@ -35,7 +35,7 @@ export class UserController {
 
       sendSuccess(res, undefined, 'Profile picture updated successfully.', 200);
     } catch (error: any) {
-      logger.error('UpdatePictureUrl Error:', error.message);
+      logger.error('UpdatePictureUrl Error:', error);
       sendError(res, 500, 'Internal server error.');
     }
   }
@@ -59,7 +59,7 @@ export class UserController {
 
       sendSuccess(res, undefined, 'User deleted successfully.', 200);
     } catch (error: any) {
-      logger.error('DeleteById Error:', error.message);
+      logger.error('DeleteById Error:', error);
       sendError(res, 500, 'Failed to delete user.');
     }
   }
@@ -83,7 +83,7 @@ export class UserController {
 
       sendSuccess(res, undefined, 'Account deletion request submitted successfully.', 200);
     } catch (error: any) {
-      logger.error('DeleteMyAccount Error:', error.message);
+      logger.error('DeleteMyAccount Error:', error);
       sendError(res, 500, 'Internal server error.');
     }
   }
@@ -113,7 +113,7 @@ export class UserController {
 
       sendSuccess(res, { valid: true, pending: true }, 'Token is valid; deletion is pending confirmation.', 200);
     } catch (error: any) {
-      logger.error('CheckDeletionRequest Error:', error.message);
+      logger.error('CheckDeletionRequest Error:', error);
       sendError(res, 400, 'Invalid or expired token.');
     }
   }
@@ -147,7 +147,7 @@ export class UserController {
       if (result) sendSuccess(res, undefined, 'Account deleted successfully.', 200);
       else sendError(res, 404, 'Account not found.');
     } catch (error: any) {
-      logger.error('ConfirmDeleteMyAccount Error:', error.message);
+      logger.error('ConfirmDeleteMyAccount Error:', error);
       sendError(res, 400, 'Invalid or expired token.');
     }
   }
@@ -160,7 +160,7 @@ export class UserController {
       await AppUserService.deleteAllAsync();
       sendSuccess(res, undefined, 'All accounts deleted successfully.', 200);
     } catch (error: any) {
-      logger.error('DeleteAll Error:', error.message);
+      logger.error('DeleteAll Error:', error);
       sendError(res, 500, 'Failed to delete all accounts.');
     }
   }
@@ -182,7 +182,7 @@ export class UserController {
       await AppUserService.toggleAllowPushNotificationsAsync(id);
       sendSuccess(res, undefined, 'Push notification preference updated successfully.', 200);
     } catch (error: any) {
-      logger.error('ToggleAllowPushNotifications Error:', error.message);
+      logger.error('ToggleAllowPushNotifications Error:', error);
       sendError(res, 500, 'Failed to toggle push notifications.');
     }
   }
@@ -207,7 +207,6 @@ export class UserController {
 
     try {
       const date = new Date(dateStr);
-      console.log('Fetching response rate for userId:', id, 'on date:', date);
       const result = await AppUserService.getResponseRateAsync(id, date);
       res.status(200).json({ success: true, data: result });
     } catch (error: any) {
@@ -244,7 +243,7 @@ export class UserController {
       const updatedUser = await AppUserService.updateUser(userId, normalizedUpdate);
       sendSuccess(res, updatedUser, 'User profile updated successfully.', 200);
     } catch (err: any) {
-      logger.error('UpdateUser Error:', err.message);
+      logger.error('UpdateUser Error:', err);
       sendError(res, 400, err.message || 'Failed to update user.');
     }
   }
@@ -254,7 +253,6 @@ export class UserController {
   // -------------------------
   static async getByEmail(req: Request, res: Response): Promise<void> {
     const email = req.query.email;
-    console.log(email);
     if (!email || typeof email !== 'string') {
       sendError(res, 400, 'Email is required and must be a string.');
       return;
@@ -264,7 +262,7 @@ export class UserController {
       const user = await GetUserDataService.getByEmail(email);
       res.status(200).json({ success: true, data: user });
     } catch (error: any) {
-      logger.error('GetByEmail Error:', error.message);
+      logger.error('GetByEmail Error:', error);
       if (error instanceof CustomException) sendError(res, 404, error.message);
       else sendError(res, 500, 'Internal server error.');
     }
@@ -283,7 +281,7 @@ export class UserController {
       const user = await GetUserDataService.getById(id);
       res.status(200).json({ success: true, data: user });
     } catch (error: any) {
-      logger.error('GetById Error:', error.message);
+      logger.error('GetById Error:', error);
       if (error instanceof CustomException) sendError(res, 404, error.message);
       else sendError(res, 500, 'Internal server error.');
     }
@@ -306,7 +304,7 @@ export class UserController {
       const allowPush = await GetUserDataService.getAllowPushNotificationStatus(userId);
       res.status(200).json({ success: true, data: { allowPushNotifications: allowPush } });
     } catch (error: any) {
-      logger.error('GetAllowPushNotificationStatus Error:', error.message);
+      logger.error('GetAllowPushNotificationStatus Error:', error);
       sendError(
         res,
         error instanceof CustomException ? 404 : 500,
@@ -330,7 +328,7 @@ export class UserController {
       const token = await service.getFCMTokenByUsername(username);
       res.status(200).json({ success: true, data: { fcmToken: token } });
     } catch (error: any) {
-      logger.error('GetFCMTokenByUsername Error:', error.message);
+      logger.error('GetFCMTokenByUsername Error:', error);
       sendError(
         res,
         error instanceof CustomException ? 404 : 500,
@@ -361,7 +359,7 @@ export class UserController {
       await FCMTokenService.updateFCMToken({ fcmToken, _id });
       sendSuccess(res, undefined, 'FCM token updated successfully.', 200);
     } catch (error: any) {
-      logger.error('UpdateFCMToken Error:', error.message);
+      logger.error('UpdateFCMToken Error:', error);
       sendError(
         res,
         error instanceof CustomException ? 400 : 500,

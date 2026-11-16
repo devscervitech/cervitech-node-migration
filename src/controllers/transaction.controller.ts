@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger';
 import { Request, Response } from 'express';
 import { TransactionService } from '../services/transaction.service';
 import { TransactionViewModel } from '../types/transaction.types';
@@ -33,7 +34,7 @@ export class TransactionController {
 
       res.status(201).json(result);
     } catch (error: any) {
-      console.error('Error creating transaction record:', error);
+      logger.error('Error creating transaction record:', error);
 
       if (error instanceof TransactionError) {
         res.status(error.statusCode).json({
@@ -66,7 +67,7 @@ export class TransactionController {
 
       res.status(200).json(result);
     } catch (error) {
-      console.error('Error fetching all transaction records:', error);
+      logger.error('Error fetching all transaction records:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   }
@@ -95,7 +96,7 @@ export class TransactionController {
 
       res.status(200).json(result);
     } catch (error) {
-      console.error('Error fetching transaction record by ID:', error);
+      logger.error('Error fetching transaction record by ID:', error);
       if (error instanceof CustomException) {
         const statusCode = error.message === 'Invalid transaction ID.' ? 400 : 404;
         res.status(statusCode).json({ error: error.message });
@@ -119,7 +120,7 @@ export class TransactionController {
 
       res.status(200).json(result);
     } catch (error) {
-      console.error('Error fetching transaction records by user ID:', error);
+      logger.error('Error fetching transaction records by user ID:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   }
