@@ -1,3 +1,4 @@
+import { revokeToken } from '../utils/revokeToken';
 import { TokenUtil } from '../utils/token.util';
 import { Request, Response } from 'express';
 import mongoose from 'mongoose';
@@ -142,7 +143,7 @@ export class UserController {
       }
 
       const result = await AppUserService.deleteByIdAsync(decoded.userId);
-      await TokenBlacklist.create({ token, expiresAt: new Date() });
+      await revokeToken(token);
 
       if (result) sendSuccess(res, undefined, 'Account deleted successfully.', 200);
       else sendError(res, 404, 'Account not found.');
