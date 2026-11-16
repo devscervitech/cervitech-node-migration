@@ -142,7 +142,7 @@ router.get('/user-goals', authenticateJWT, GoalController.getGoalsByUserId);
  *       - bearerAuth: []
  *     responses:
  *       200:
- *         description: Targeted average neck angle
+ *         description: Targeted average neck angle, or zero when no goal exists
  *         content:
  *           application/json:
  *             schema:
@@ -154,8 +154,6 @@ router.get('/user-goals', authenticateJWT, GoalController.getGoalsByUserId);
  *                   type: number
  *       400:
  *         description: Not authenticated
- *       404:
- *         description: No neck angle data found for this user
  */
 router.get('/neck-angle', authenticateJWT, GoalController.getCurrentTargetedAverageNeckAngle);
 

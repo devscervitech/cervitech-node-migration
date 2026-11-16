@@ -132,10 +132,6 @@ export class GoalController {
     try {
       const result = await GoalService.getCurrentTargetedAverageNeckAngleAsync(userId);
 
-      if (result === null || result === undefined) {
-        res.status(404).json({ error: 'No neck angle data found for this user.' });
-        return;
-      }
 
       res.status(200).json({ success: true, data: result });
     } catch (error) {
