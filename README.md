@@ -16,7 +16,7 @@
 ##### ├── .env # Environment variable file
 ##### ├── .prettierrc # Prettier config for code formatting
 ##### ├── tsconfig.json # TypeScript configuration
-##### ├── yarn.lock # Yarn lockfile
+##### ├── package-lock.json # npm lockfile
 ##### └── package.json # Project metadata and scripts
 
 ## Premium comp script
@@ -38,3 +38,7 @@ npx dotenv -e .env.prod -- npx tsx scripts/grant-premium.ts
    - users not found by email
 
 This script directly updates the `AppUser` document and does not add a `TransactionRecord`, so it will not be counted as a payment or later revoked by reconciliation logic.
+
+Use npm with Node.js 20.19+ (CI uses Node 22): `npm ci`, then `npm run typecheck && npm test && npm run build`. Commit package-lock.json with dependency changes.
+
+Transaction timestamps use the existing `createdOn` and `updatedOn` names, maintained by Mongoose. Existing `createdAt`/`updatedAt` fields in MongoDB are not migrated or deleted by this cleanup. Audit historical records before any separate timestamp backfill. `deletedOn` remains an optional deletion marker.
