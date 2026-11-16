@@ -16,7 +16,6 @@ import usersRoutes from './routes/users.routes.js';
 import neckAngleRoutes from './routes/neckAngle.routes';
 import transactionRoutes from './routes/transaction.routes';
 import goalsroutes from './routes/goals.routes.js';
-import emailRoutes from './routes/email.routes.js';
 import { startMonthlyReminderJob, runMonthlyReminderCatchUp } from './jobs/monthlyReminder.job';
 import { startSubscriptionSyncJob } from './jobs/subscriptionSync.job';
 import { startPushReminderJobs } from './jobs/pushReminders.job';
@@ -63,7 +62,6 @@ app.use('/api/v1/neck-angle', neckAngleRoutes);
 app.use('/api/v1/backoffice-users', backOfficeUser);
 app.use('/api/v1/transaction', transactionRoutes);
 app.use('/api/v1/goals', goalsroutes);
-app.use('/api/v1/email', emailRoutes);
 app.use('/api/v1/health', healthRoutes);
 
 // Connect to MongoDB and start server
