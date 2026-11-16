@@ -59,7 +59,7 @@ export class GetUserDataService {
     }
   }
 
-  public async getFCMTokenByUsername(username: string): Promise<string> {
+  public static async getFCMTokenByUsername(username: string): Promise<string> {
       try {
         const user = await AppUser.findOne({ username }).exec();
   

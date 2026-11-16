@@ -153,19 +153,6 @@ export class UserController {
   }
 
   // -------------------------
-  // Delete all users
-  // -------------------------
-  static async deleteAll(req: Request, res: Response): Promise<void> {
-    try {
-      await AppUserService.deleteAllAsync();
-      sendSuccess(res, undefined, 'All accounts deleted successfully.', 200);
-    } catch (error: any) {
-      logger.error('DeleteAll Error:', error.message);
-      sendError(res, 500, 'Failed to delete all accounts.');
-    }
-  }
-
-  // -------------------------
   // Toggle push notification preference
   // -------------------------
   static async toggleAllowPushNotifications(
@@ -326,8 +313,8 @@ export class UserController {
     }
 
     try {
-      const service = new GetUserDataService();
-      const token = await service.getFCMTokenByUsername(username);
+
+      const token = await GetUserDataService.getFCMTokenByUsername(username);
       res.status(200).json({ success: true, data: { fcmToken: token } });
     } catch (error: any) {
       logger.error('GetFCMTokenByUsername Error:', error.message);
