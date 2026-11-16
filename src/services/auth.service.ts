@@ -72,7 +72,7 @@ export class AuthService {
         neckAngleRecords: [],
         goals: [],
         mobileChannel: userData.mobileChannel || MOBILE_CHANNEL.WEB,
-        prompt: 0,
+        prompt: 5,
         notificationCount: 0,
         currentTargetedAverageNeckAngle: 0,
         dateRegistered: new Date(),
