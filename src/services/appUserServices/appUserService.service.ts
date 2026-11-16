@@ -1,3 +1,4 @@
+import { computeCompliance } from '../goalCycle';
 import AppUser, { IAppUser } from '../../models/AppUser';
 import ResponseRate from '../../models/ResponseRate';
 import { PictureUrlUpdateViewModel } from '../../viewmodels/PictureUrlUpdateViewModel';
@@ -13,7 +14,6 @@ import { PushNotificationModelDTO } from '../../types/pushNotificationModel.type
 import { logger } from '../../utils/logger';
 import { UpdateUserRequest } from '../../types/user.types';
 import { AppUserViewModel, toAppUserViewModel } from '../../viewmodels/AppUser.viewmodel';
-import User from '../../models/User';
 // import {FCMTokenUpdateViewModel} from "../../viewmodels/FCMTokenUpdateViewModel";
 import { TokenUtil } from '../../utils/token.util';
 import { EmailUtils } from '../../utils/EmailService/emailutils';
@@ -176,16 +176,6 @@ export class AppUserService {
     }
   }
 
-  static async deleteAllAsync(): Promise<boolean> {
-    try {
-      await AppUser.updateMany({ deleted: { $ne: true } }, { $set: { deleted: true } });
-      return true;
-    } catch (ex: any) {
-      logger.error('Unexpected error while deleting all users', { error: ex });
-      throw ex;
-    }
-  }
-
   static async toggleAllowPushNotificationsAsync(userId: string): Promise<boolean> {
     try {
       if (!userId || userId.trim() === '') {
@@ -315,10 +305,7 @@ export class AppUserService {
       const goal = await Goal.findById(goalId);
       if (!goal) return false;
 
-      const compliance =
-        average >= goal.targetedAverageNeckAngle
-          ? 100
-          : Math.min(100, Math.round((average / goal.targetedAverageNeckAngle) * 1000) / 10);
+      const compliance = computeCompliance(average, goal.targetedAverageNeckAngle);
 
       const goalCycleReport = new GoalCycleCompletionReport({
         actualAverageNeckAngle: isNaN(average) ? 0 : Math.round(average * 10) / 10,

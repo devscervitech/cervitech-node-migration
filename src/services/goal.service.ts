@@ -5,11 +5,7 @@ import { GoalCycleReportViewModel } from '../types/goalCycleReport.types';
 import { CustomException } from '../utils/customException';
 import { DateLibrary } from '../utils/dateLibrary';
 import { Utils } from '../utils/utils';
-import { PushNotificationDriver } from './pushNotificationDriver';
-import { CronJob } from 'cron';
 import { logger } from '../utils/logger';
-import { AppUserService } from './appUserServices/appUserService.service';
-import { PushNotificationModelDTO } from '../types/pushNotificationModel.types';
 import { GoalCycleCompletionReport } from '../models/GoalCycleCompletionReport';
 import { computeFirstCycleEndsAt, isSupportedFrequency } from './goalCycle';
 
@@ -28,7 +24,6 @@ export class GoalService {
         logger.info('turn-on goal with no goal cycle reports', { userId: appUserId });
       }
 
-      const incomingReports = model.goalCycleCompletionReports ?? [];
 
       // Save each GoalCycleCompletionReport individually
       const savedReports = await Promise.all(
@@ -70,7 +65,6 @@ export class GoalService {
       await user.save();
       logger.info('Goal flag enabled for user', { userId: appUserId });
 
-      // this.scheduleJob(model.appUserId, 'DAILY', savedGoal.dateSet, savedGoal._id?.toString() || '');
 
       return true;
     } catch (error: any) {
@@ -91,7 +85,6 @@ export class GoalService {
       user.isGoalOn = false;
       await user.save();
 
-      // this.removeScheduledJob(userId);
 
       return true;
     } catch (error: any) {
@@ -145,53 +138,4 @@ export class GoalService {
     }
   }
 
-  async testJobScheduler(): Promise<boolean> {
-    try {
-      const model: PushNotificationModelDTO = {
-        to: 'et9fhiwOUvI:APA91bEyUxI25XaktkMxe1tt-i9Ff3z4-SL8jIDky2f1ClgqAT62RjhxLoZxq6191Kqf_byKhHTJxXhdRM56640ISc-2clzhT3lZXDuhrY_lX573gw00ADQB8aZnOM7x7yHGxgttajgP',
-        title: 'Test Scheduler',
-        body: 'Toyosi the laziest dev',
-      };
-
-      new CronJob(
-        '* * * * *', // runs every minute
-        async () => {
-          await PushNotificationDriver.sendPushNotification(model);
-        },
-        null, // onComplete
-        true // start immediately
-      );
-      return true;
-    } catch (error: any) {
-      logger.error(error.message);
-      throw new CustomException(error.message);
-    }
-  }
-
-  private formatDay(dayIndex: number): string {
-    const days = ['SUN', 'MON', 'TUE', 'WED', 'THUR', 'FRI', 'SAT'];
-    return days[dayIndex] ?? 'NIL';
-  }
-
-  private scheduleJob(userId: string, frequency: string, dateSet: Date, goalId: string): void {
-    const jobId = `userid-${userId}`;
-    const cronTime = frequency === 'DAILY' ? '*/5 * * * *' : '*/10 * * * *';
-
-    new CronJob(
-      cronTime,
-      () => {
-        AppUserService.calculateAverageOfLastWeekOrDay(userId, frequency, dateSet, goalId);
-      },
-      null,
-      true,
-      undefined,
-      undefined,
-      false
-    );
-  }
-
-  private removeScheduledJob(userId: string): void {
-    const jobId = `userid-${userId}`;
-    // Implement job removal logic depending on your scheduler
-  }
 }
