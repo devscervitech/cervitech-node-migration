@@ -37,6 +37,7 @@ router.get('/', UserController.getByEmail);
  * /users/response-rate:
  *   get:
  *     tags: [User]
+ *     description: Day boundaries and hourly buckets use UTC.
  *     summary: Get a user's response rate for a given date
  *     parameters:
  *       - in: query
