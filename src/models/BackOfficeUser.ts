@@ -1,13 +1,11 @@
 // src/models/BackofficeUser.ts
 import mongoose, { Schema } from "mongoose";
-import { IUser, UserSchema } from "./User";
+import { IUser, UserSchema } from "./userFields";
 
 export interface IBackofficeUser extends IUser {
   username: string;
   accessLevel: string;
   readOnly: boolean;
-  resetToken?: string;
-  resetTokenExpires?: Date;
 }
 
 const BackofficeUserSchema: Schema = new Schema<IBackofficeUser>({
@@ -16,8 +14,6 @@ const BackofficeUserSchema: Schema = new Schema<IBackofficeUser>({
   username: { type: String, required: true, unique: true },
   accessLevel: { type: String, required: true },
   readOnly: { type: Boolean, default: false },
-  resetToken: { type: String },
-  resetTokenExpires: { type: Date },
 });
 
 const BackofficeUser =
