@@ -243,3 +243,9 @@ Used for logging and UI indication of environment status.
 - Rotate secrets regularly in production
 
 Google Play payments require `GOOGLE_PLAY_SUBSCRIPTION_IDS`: a comma-separated allowlist of subscription product IDs. Legacy status-only payment submissions are rejected. Existing duplicate paymentRef records must be reconciled before creating the unique paymentRef index in production.
+
+### Logging and credential exposure response
+
+`LOG_LEVEL` controls Winston verbosity (default `info`). Logs are structured JSON on stdout with recursive credential redaction and exception/rejection handlers. Configure retention, rotation, access controls, and aggregation in the container runtime or log collector; no local log file is maintained.
+
+Remove retained signup payloads, deletion/reset tokens, and user/health records from accessible logs under the incident retention policy. Identify accounts created while plaintext signup logging was deployed using account creation dates and deployment history, without exporting their logged passwords. Require password resets for affected accounts and invalidate affected sessions. Rotate affected signing credentials if signing material was exposed; expired action tokens do not need reissuing. Coordinate account recovery and user notification before production changes. This patch does not rotate account passwords, purge historical logs, or revoke sessions.
