@@ -70,6 +70,7 @@ router.post('/records/random', NeckAngleController.postRandomTestBatchNeckAngleR
  *   get:
  *     tags: [NeckAngle]
  *     summary: Get the authenticated user's computed neck-angle statistics
+ *     description: responseRate is the all-time responses-to-prompts percentage; posture angles do not modify it.
  *     security:
  *       - bearerAuth: []
  *     responses:
