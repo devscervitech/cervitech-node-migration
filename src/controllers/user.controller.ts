@@ -318,27 +318,6 @@ export class UserController {
   // -------------------------
   // Get FCM token by username
   // -------------------------
-  static async getFCMTokenByUsername(req: Request, res: Response): Promise<void> {
-    const username = req.query.username ?? req.query.Username;
-    if (!username || typeof username !== 'string') {
-      sendError(res, 400, 'Username is required and must be a string.');
-      return;
-    }
-
-    try {
-      const service = new GetUserDataService();
-      const token = await service.getFCMTokenByUsername(username);
-      res.status(200).json({ success: true, data: { fcmToken: token } });
-    } catch (error: any) {
-      logger.error('GetFCMTokenByUsername Error:', error.message);
-      sendError(
-        res,
-        error instanceof CustomException ? 404 : 500,
-        error instanceof CustomException ? error.message : 'Internal server error.'
-      );
-    }
-  }
-
   // -------------------------
   // Update FCM token
   // -------------------------
