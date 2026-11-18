@@ -29,11 +29,10 @@ import { EmailUtils } from '../utils/EmailService/emailutils.js';
 import { AuthValidation } from '../validation/authValidation.js';
 import { Goal } from '../models/Goal.js';
 import { toAppUserViewModel } from '../viewmodels/AppUser.viewmodel.js';
+import { normalizePassword, verifyPasswordInput } from '../utils/password.util.js';
 
 export class AuthService {
   static async signup(data: SignupRequest): Promise<SignupResponse> {
-    console.log('Data', data);
-
     const validationError = AuthValidation.signupValidation(data);
     if (validationError) {
       return {
@@ -51,7 +50,11 @@ export class AuthService {
       };
     }
 
-    const hashedPassword = await HashUtil.hash(password);
+    const normalizedPassword = normalizePassword(password);
+    if (!normalizedPassword) {
+      return { success: false, message: 'Password cannot be empty' };
+    }
+    const hashedPassword = await HashUtil.hash(normalizedPassword);
     const email = userData.email.toLowerCase().trim();
 
     try {
@@ -120,12 +123,16 @@ export class AuthService {
     }
 
     const password = user.password;
-    const same = await HashUtil.compare(formerPassword, password);
+    const same = await verifyPasswordInput(formerPassword, password);
 
-    if (!same) {
+    if (!same.isValid) {
       return { success: false, message: 'Incorrect former password, Try again or RESET password' };
     }
-    const newPassHash = await HashUtil.hash(newPassword);
+    const normalizedNewPassword = normalizePassword(newPassword);
+    if (!normalizedNewPassword) {
+      return { success: false, message: 'New password cannot be empty' };
+    }
+    const newPassHash = await HashUtil.hash(normalizedNewPassword);
 
     await AppUser.findByIdAndUpdate(userId, { password: newPassHash });
 
@@ -166,7 +173,10 @@ export class AuthService {
 
     const { userId } = TokenUtil.verifyToken(token, 'password_reset');
 
-    const hashed = await HashUtil.hash(newPassword);
+    const normalizedPassword = normalizePassword(newPassword);
+    if (!normalizedPassword) throw new Error('Password cannot be empty');
+
+    const hashed = await HashUtil.hash(normalizedPassword);
     await AppUser.findByIdAndUpdate(userId, { password: hashed });
 
     await TokenBlacklist.create({
@@ -206,12 +216,16 @@ export class AuthService {
       };
     }
 
-    const isValidPassword = await HashUtil.compare(password, user.password);
-    if (!isValidPassword) {
+    const passwordCheck = await verifyPasswordInput(password, user.password);
+    if (!passwordCheck.isValid) {
       return {
         success: false,
         message: 'An incorrect password provided. Please check password and try again.',
       };
+    }
+
+    if (passwordCheck.needsRehash) {
+      user.password = await HashUtil.hash(passwordCheck.normalizedPassword);
     }
 
     user.lastLoginDateTime = new Date();

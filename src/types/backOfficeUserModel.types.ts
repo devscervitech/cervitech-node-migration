@@ -1,4 +1,6 @@
 // src/dtos/backOfficeUserModel.ts
+import type { BackofficeAccessLevel } from "../enums/backofficeAccessLevel";
+
 export interface backOfficeUserModel {
   firstName: string;
   lastName: string;
@@ -6,7 +8,7 @@ export interface backOfficeUserModel {
   telephone?: string;
   username: string;
   password: string;
-  accessLevel: string;
+  accessLevel: BackofficeAccessLevel;
   readOnly?: boolean;
 }
 

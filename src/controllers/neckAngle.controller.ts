@@ -9,13 +9,17 @@ import { NeckAngleModel } from '../models/NeckAngle';
 import { JobScheduler } from '../services/JobScheduler';
 
 export class NeckAngleController {
-  static async postBatchNeckAngleRecords(req: Request, res: Response): Promise<void> {
+  static async postBatchNeckAngleRecords(req: AuthenticatedRequest, res: Response): Promise<void> {
     const model: NeckAngleModel = req.body;
-    logger.info(`NeckAngleModel: ${JSON.stringify(model)}`);
+    const userId = req.user?.userId;
+
+    if (!userId || req.user?.role !== 'APP_USER') {
+      res.status(401).json({ statusCode: 401, message: 'Unauthorized', data: null });
+      return;
+    }
 
     if (
       !model ||
-      typeof model.appUserId !== 'string' ||
       !Array.isArray(model.neckAngleRecords) ||
       model.neckAngleRecords.length === 0
     ) {
@@ -28,7 +32,13 @@ export class NeckAngleController {
     }
 
     try {
-      const data = await NeckAngleService.postBatchNeckAngleRecordAsync(model);
+      const scopedModel: NeckAngleModel = {
+        ...model,
+        appUserId: userId,
+      };
+      for (const record of scopedModel.neckAngleRecords) record.appUserId = userId;
+      logger.info('Neck-angle batch received.', { userId, recordCount: scopedModel.neckAngleRecords.length });
+      const data = await NeckAngleService.postBatchNeckAngleRecordAsync(scopedModel);
       res.status(200).json({
         statusCode: 200,
         message: 'Successful',

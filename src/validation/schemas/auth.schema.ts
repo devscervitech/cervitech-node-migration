@@ -9,6 +9,8 @@ export const signupSchema = Joi.object({
   }),
 
   password: Joi.string()
+    .replace(/\s/g, '')
+    .description('All whitespace is removed before password validation and hashing.')
     .required()
     .min(8)
     .max(30)
@@ -30,6 +32,7 @@ export const signupSchema = Joi.object({
   }),
 
   confirmPassword: Joi.string()
+    .replace(/\s/g, '')
     .required()
     .valid(Joi.ref('password'))
     .messages({
@@ -80,7 +83,11 @@ export const loginSchema = Joi.object({
     'string.empty': 'Email or username cannot be empty',
   }),
 
-  password: Joi.string().required().messages({
+  password: Joi.string()
+    .replace(/\s/g, '')
+    .description('All whitespace is removed before password verification.')
+    .required()
+    .messages({
     'string.empty': 'Password cannot be empty',
     'any.required': 'Password is required',
   }),

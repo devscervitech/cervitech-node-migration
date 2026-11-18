@@ -1,7 +1,12 @@
 // routes/neckAngleRoutes.ts
 import express from 'express';
 import { NeckAngleController } from '../controllers/neckAngle.controller';
-import { authenticateJWT } from '../middlewares/auth.middleware.js';
+import {
+  authenticateJWT,
+  authorizeRole,
+  requireAccessLevel,
+  requireWritable,
+} from '../middlewares/auth.middleware.js';
 
 const router = express.Router();
 
@@ -14,16 +19,21 @@ const router = express.Router();
  *   post:
  *     tags: [NeckAngle]
  *     summary: Submit a batch of neck-angle records for a user
+ *     description: Records are always stored for the authenticated app user. Any appUserId supplied in the request body is ignored.
+ *     security:
+ *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
  *           schema:
  *             type: object
- *             required: [appUserId, neckAngleRecords]
+ *             required: [neckAngleRecords]
  *             properties:
  *               appUserId:
  *                 type: string
+ *                 deprecated: true
+ *                 description: Ignored; record ownership comes from the authenticated token.
  *               neckAngleRecords:
  *                 type: array
  *                 items:
@@ -32,9 +42,18 @@ const router = express.Router();
  *       200:
  *         description: Records saved
  *       400:
- *         description: appUserId or neckAngleRecords missing/invalid
+ *         description: neckAngleRecords missing/invalid
+ *       401:
+ *         description: Not authenticated
+ *       403:
+ *         description: Authenticated app-user token required
  */
-router.post('/records/batch', NeckAngleController.postBatchNeckAngleRecords);
+router.post(
+  '/records/batch',
+  authenticateJWT,
+  authorizeRole('APP_USER'),
+  NeckAngleController.postBatchNeckAngleRecords
+);
 
 /**
  * @openapi
@@ -42,6 +61,9 @@ router.post('/records/batch', NeckAngleController.postBatchNeckAngleRecords);
  *   post:
  *     tags: [NeckAngle]
  *     summary: "[Dev] Submit a batch of randomly generated test neck-angle records"
+ *     description: Administrator only. This endpoint modifies the selected app user's test records.
+ *     security:
+ *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
@@ -61,8 +83,19 @@ router.post('/records/batch', NeckAngleController.postBatchNeckAngleRecords);
  *         description: Records saved
  *       400:
  *         description: appUserId or testValues missing/invalid
+ *       401:
+ *         description: Not authenticated
+ *       403:
+ *         description: Administrator privileges required or account is read-only
  */
-router.post('/records/random', NeckAngleController.postRandomTestBatchNeckAngleRecords);
+router.post(
+  '/records/random',
+  authenticateJWT,
+  authorizeRole('BACKOFFICE_USER'),
+  requireAccessLevel('ADMIN'),
+  requireWritable,
+  NeckAngleController.postRandomTestBatchNeckAngleRecords
+);
 
 /**
  * @openapi
@@ -79,8 +112,10 @@ router.post('/records/random', NeckAngleController.postRandomTestBatchNeckAngleR
  *         description: Failed to compute statistics
  *       401:
  *         description: Not authenticated
+ *       403:
+ *         description: Authenticated app-user token required
  */
-router.get('/stats', authenticateJWT, NeckAngleController.getUserNeckAngleStatistics);
+router.get('/stats', authenticateJWT, authorizeRole('APP_USER'), NeckAngleController.getUserNeckAngleStatistics);
 
 /**
  * @openapi
@@ -95,10 +130,13 @@ router.get('/stats', authenticateJWT, NeckAngleController.getUserNeckAngleStatis
  *         description: Notification count reset
  *       401:
  *         description: Not authenticated
+ *       403:
+ *         description: Authenticated app-user token required
  */
 router.post(
   '/notification-count/reset',
   authenticateJWT,
+  authorizeRole('APP_USER'),
   NeckAngleController.resetNotificationCount
 );
 
@@ -108,11 +146,24 @@ router.post(
  *   get:
  *     tags: [NeckAngle]
  *     summary: "[Dev] List up to 10 app users for testing"
+ *     description: Administrator only. The response includes usernames, email addresses, and FCM tokens.
+ *     security:
+ *       - bearerAuth: []
  *     responses:
  *       200:
  *         description: Users retrieved
+ *       401:
+ *         description: Not authenticated
+ *       403:
+ *         description: Administrator privileges required
  */
-router.get('/test-users', NeckAngleController.getUsersForTesting);
+router.get(
+  '/test-users',
+  authenticateJWT,
+  authorizeRole('BACKOFFICE_USER'),
+  requireAccessLevel('ADMIN'),
+  NeckAngleController.getUsersForTesting
+);
 
 /**
  * @openapi
@@ -200,7 +251,9 @@ router.post('/weekly-averages', NeckAngleController.getWeeklyNeckAngleAverages);
  *         description: Failed to compute chart data
  *       401:
  *         description: Not authenticated
+ *       403:
+ *         description: Authenticated app-user token required
  */
-router.get('/weekly-chart', authenticateJWT, NeckAngleController.getWeeklyChartData);
+router.get('/weekly-chart', authenticateJWT, authorizeRole('APP_USER'), NeckAngleController.getWeeklyChartData);
 
 export default router;

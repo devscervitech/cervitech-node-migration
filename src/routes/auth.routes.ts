@@ -1,7 +1,7 @@
 // src/routes/auth.routes.ts
 import { Router } from 'express';
 import { AuthController } from '../controllers/auth.controller.js';
-import { authenticateJWT } from '../middlewares/auth.middleware.js';
+import { authenticateJWT, authorizeRole } from '../middlewares/auth.middleware.js';
 
 const router = Router();
 
@@ -51,8 +51,10 @@ router.post('/signup', AuthController.signup);
  *             properties:
  *               formerPassword:
  *                 type: string
+ *                 description: All whitespace is removed before password verification.
  *               newPassword:
  *                 type: string
+ *                 description: All whitespace is removed before password validation and hashing.
  *     responses:
  *       200:
  *         description: Password changed
@@ -66,8 +68,14 @@ router.post('/signup', AuthController.signup);
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       403:
+ *         description: Authenticated app-user token required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
  */
-router.put('/change-password', authenticateJWT, AuthController.changePassword);
+router.put('/change-password', authenticateJWT, authorizeRole('APP_USER'), AuthController.changePassword);
 
 /**
  * @openapi
@@ -156,6 +164,7 @@ router.post('/verify-reset-otp', AuthController.verifyResetOtp);
  *                 type: string
  *               newPassword:
  *                 type: string
+ *                 description: All whitespace is removed before password validation and hashing.
  *     responses:
  *       200:
  *         description: Password reset
@@ -221,8 +230,14 @@ router.post('/login', AuthController.authenticate);
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       403:
+ *         description: Authenticated app-user token required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
  */
-router.post('/logout', authenticateJWT, AuthController.logout);
+router.post('/logout', authenticateJWT, authorizeRole('APP_USER'), AuthController.logout);
 
 /**
  * @openapi
