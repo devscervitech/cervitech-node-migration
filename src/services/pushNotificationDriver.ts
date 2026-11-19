@@ -44,8 +44,7 @@ export async function clearInvalidToken(token: string) {
 }
 
 export class PushNotificationDriver {
-  /** Send to a single device. Kept for the existing /fcm/test-push and
-   *  /fcm/test-scheduler dev endpoints and any other single-target caller. */
+  /** Send a push notification to one device. */
   static async sendPushNotification(model: PushNotificationModelDTO): Promise<boolean> {
     const results = await PushNotificationDriver.sendBatch([model]);
     return results.delivered[0] ?? false;

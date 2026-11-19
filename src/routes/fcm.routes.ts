@@ -1,6 +1,5 @@
 // src/routes/fcm.routes.ts
 import { Router } from 'express';
-import { FCMController } from '../controllers/fcmToken.controller';
 import { UserController } from '../controllers/user.controller';
 import { authenticateJWT, authorizeRole } from '../middlewares/auth.middleware';
 import { deprecatedRoute } from '../middlewares/deprecatedRoute';
@@ -52,65 +51,5 @@ router.put(
   authorizeRole('APP_USER'),
   UserController.updateFCMToken
 );
-
-// Test/dev endpoints (no auth)
-
-/**
- * @openapi
- * /fcm/test-push:
- *   get:
- *     tags: [FCM]
- *     summary: "[Dev] Send a test push notification to a token"
- *     parameters:
- *       - in: query
- *         name: token
- *         required: true
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: Push sent
- *       400:
- *         description: token query param missing
- */
-router.get('/test-push', FCMController.testPush);
-
-/**
- * @openapi
- * /fcm/test-scheduler:
- *   post:
- *     tags: [FCM]
- *     summary: "[Dev] Start a cron job that repeatedly pushes to a token"
- *     parameters:
- *       - in: query
- *         name: token
- *         required: true
- *         schema:
- *           type: string
- *       - in: query
- *         name: cron
- *         required: false
- *         description: Cron expression, defaults to every minute
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: Scheduler started
- *       400:
- *         description: token query param missing
- */
-router.post('/test-scheduler', FCMController.testScheduler);
-
-/**
- * @openapi
- * /fcm/stop-scheduler:
- *   post:
- *     tags: [FCM]
- *     summary: "[Dev] Stop all test-push scheduled jobs"
- *     responses:
- *       200:
- *         description: Schedulers stopped
- */
-router.post('/stop-scheduler', FCMController.stopScheduler);
 
 export default router;
