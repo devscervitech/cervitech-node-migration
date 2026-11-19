@@ -66,40 +66,5 @@ export class JobScheduler {
     }
   }
 
-  /**
-   * Remove all jobs
-   */
-  public static removeAllJobs(): void {
-    for (const [jobId, job] of this.jobs) {
-      job.stop();
-    }
-    this.jobs.clear();
-    logger.info('Removed all scheduled jobs');
-  }
-
-  /**
-   * Get all active job IDs
-   */
-  public static getActiveJobIds(): string[] {
-    return Array.from(this.jobs.keys());
-  }
-
-  /**
-   * Add a generic cron job by ID and expression
-   */
-  public static addJob(jobId: string, cronExpression: string, callback: () => void | Promise<void>): void {
-    this.removeJob(jobId);
-
-    const job = new CronJob(
-      cronExpression,
-      callback,
-      null,
-      true,
-      'UTC'
-    );
-
-    this.jobs.set(jobId, job);
-    logger.info(`Added job ${jobId} with cron: ${cronExpression}`);
-  }
 }
 
