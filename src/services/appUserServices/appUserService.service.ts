@@ -15,7 +15,6 @@ import { PushNotificationModelDTO } from '../../types/pushNotificationModel.type
 import { logger } from '../../utils/logger';
 import { UpdateUserRequest } from '../../types/user.types';
 import { AppUserViewModel, toAppUserViewModel } from '../../viewmodels/AppUser.viewmodel';
-import User from '../../models/User';
 // import {FCMTokenUpdateViewModel} from "../../viewmodels/FCMTokenUpdateViewModel";
 import { TokenUtil } from '../../utils/token.util';
 import { EmailUtils } from '../../utils/EmailService/emailutils';
@@ -171,16 +170,6 @@ export class AppUserService {
           error: ex,
         });
       }
-      throw ex;
-    }
-  }
-
-  static async deleteAllAsync(): Promise<boolean> {
-    try {
-      await AppUser.updateMany({ deleted: { $ne: true } }, { $set: { deleted: true } });
-      return true;
-    } catch (ex: any) {
-      logger.error('Unexpected error while deleting all users', { error: ex });
       throw ex;
     }
   }

@@ -1,5 +1,5 @@
 import mongoose, { Schema, Document } from 'mongoose';
-import { IUser } from './User';
+import { IUser } from './userFields';
 import { MOBILE_CHANNEL } from '../enums/mobileChannel';
 import { INeckAngleRecord, NeckAngleRecordSchema } from './NeckAngleRecord';
 import { IGoal, GoalSchema } from './Goal';

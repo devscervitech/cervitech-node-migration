@@ -9,6 +9,7 @@ const router = express.Router();
  * /transaction:
  *   get:
  *     tags: [Transaction]
+ *     description: Transaction timestamps are maintained as createdOn and updatedOn.
  *     summary: List the authenticated user's transaction records
  *     security:
  *       - bearerAuth: []

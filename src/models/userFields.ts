@@ -1,4 +1,4 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import { Schema, Document } from 'mongoose';
 
 export interface IUser extends Document {
     firstName: string;
@@ -20,7 +20,3 @@ export const UserSchema: Schema = new Schema<IUser>({
     dateRegistered: { type: Date, required: true, default: Date.now },
 });
 
-// Safe model creation - check if model already exists
-const User = mongoose.models.User || mongoose.model<IUser>('User', UserSchema, 'users');
-
-export default User;

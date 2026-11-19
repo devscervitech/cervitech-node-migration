@@ -1,5 +1,4 @@
 import express from 'express';
-import session from 'express-session';
 import morgan from 'morgan';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
@@ -8,7 +7,6 @@ import { logger } from './utils/logger';
 import { swaggerSpec } from './config/swagger';
 import cors from 'cors';
 import bodyParser from 'body-parser';
-import legacyRoutes from './routes/legacy.routes';
 import backOfficeUser from './routes/backOfficeUser.routes';
 import authRoutes from './routes/auth.routes.js';
 import fcmRoutes from './routes/fcm.routes.js';
@@ -54,7 +52,6 @@ app.use(
   })
 );
 
-// app.use('/api/v1', legacyRoutes);
 
 // API docs
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));

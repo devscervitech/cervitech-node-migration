@@ -19,7 +19,6 @@ import {
   LogoutResponse,
 } from '../types/auth.types.js';
 import { TokenUtil } from '../utils/token.util.js';
-import User from '../models/User.js';
 import { MOBILE_CHANNEL } from '../enums/mobileChannel.js';
 import TokenBlacklist from '../models/TokenBlacklist.js';
 import AppUser from '../models/AppUser.js';

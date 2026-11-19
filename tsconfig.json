@@ -1,5 +1,5 @@
 // Leave as CommonJS.
-// To start server, either run "yarn build" then "yarn start" or simply run "yarn dev"
+// To start server, either run "npm run build" then "npm start" or simply run "npm run dev"
 
 {
   "compilerOptions": {

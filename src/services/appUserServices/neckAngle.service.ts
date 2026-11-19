@@ -14,7 +14,6 @@ import { INeckAngleRecord } from '../../models/NeckAngleRecord';
 import ResponseRate from '../../models/ResponseRate';
 import { PushNotificationDriver } from '../pushNotificationDriver';
 import { Utils } from '../../utils/utils';
-import { Calculator } from '../../utils/calculator';
 import { AutomatePostNeckAngleRecordsViewModel } from '../../viewmodels/AutomatePostNeckAngleRecords';
 import { Goal } from '../../models/Goal';
 import { GoalCycleCompletionReport } from '../../models/GoalCycleCompletionReport';
@@ -252,7 +251,7 @@ export class NeckAngleService {
       const record = new NeckAngleRecordModel({
         appUserId: model.appUserId,
         angle,
-        craniumVertebralAngle: Calculator.getCraniumVertebralAngleFromNeckAngle(angle),
+        craniumVertebralAngle: getCraniumVertebralAngleFromNeckAngle(angle),
         dateTimeRecorded: randomDate,
         counter: 0,
       });
@@ -266,82 +265,6 @@ export class NeckAngleService {
 
   // Optional: Define defaultPrompt if needed
   static defaultPrompt = 5;
-
-  // static async calculateAverageOfLastWeekOrDay(
-  //   userId: string,
-  //   frequency: GOAL_FREQUENCY,
-  //   dateCreated: Date,
-  //   goalId: string
-  // ): Promise<boolean> {
-  //   try {
-  //     let average = 0;
-
-  //     let startDate: Date;
-  //     let endDate: Date = new Date();
-
-  //     if (frequency === GOAL_FREQUENCY.DAILY) {
-  //       startDate = DateLibrary.getYesterdayDateTime();
-  //     } else if (frequency === GOAL_FREQUENCY.WEEKLY) {
-  //       startDate = DateLibrary.getLastWeekDateTime();
-  //     } else {
-  //       throw new Error("Invalid Goal Frequency");
-  //     }
-
-  //     const records = await NeckAngleRecordModel.find({
-  //       appUserId: new Types.ObjectId(userId),
-  //       dateTimeRecorded: {
-  //         $gte: startDate,
-  //         $lte: endDate,
-  //       },
-  //     }).lean();
-
-  //     if (records.length > 0) {
-  //       average = records.reduce((sum, r) => sum + r.angle, 0) / records.length;
-  //     }
-
-  //     const goal = await Goal.findById(goalId);
-  //     if (!goal) return false;
-
-  //     let complianceInPercentage =
-  //       average >= goal.targetedAverageNeckAngle
-  //         ? 100
-  //         : Math.round((average / goal.targetedAverageNeckAngle) * 100 * 10) / 10;
-
-  //     complianceInPercentage = complianceInPercentage > 100 ? 100 : complianceInPercentage;
-
-  //     if (isNaN(complianceInPercentage)) complianceInPercentage = 0;
-
-  //     const report = new GoalCycleCompletionReport({
-  //       actualAverageNeckAngle: isNaN(average)
-  //         ? 0
-  //         : Math.round(average * 10) / 10,
-  //       complianceInPercentage,
-  //       dateOfConcludedCycle: new Date(),
-  //       goalId: new Types.ObjectId(goalId),
-  //     });
-
-  //     await report.save();
-
-  //     const userFCMToken = await getFCMTokenById(userId); // implement separately
-
-  //     if (userFCMToken && userFCMToken.trim() !== "") {
-  //       const pushNotificationModel = {
-  //         to: userFCMToken,
-  //         title: "Your set goal",
-  //         body: `Hi, you scored ${Math.round(report.complianceInPercentage * 10) / 10}/100`,
-  //       };
-
-  //       await PushNotificationDriver.sendPushNotification(pushNotificationModel); // implement separately
-  //     } else {
-  //       throw new Error("User does not have an FCM Token");
-  //     }
-
-  //     return true;
-  //   } catch (err) {
-  //     logger.error("Error in calculateAverageOfLastWeekOrDay:", err);
-  //     throw err;
-  //   }
-  // }
 
   static async getWeeklyChartData(userId: string): Promise<WeeklyChartDataViewModel> {
     const today = new Date();

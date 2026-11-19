@@ -1,3 +1,5 @@
+import AppUser from '../models/AppUser';
+import { Utils } from '../utils/utils';
 // user.controller.ts
 import { Request, Response } from 'express';
 import { getApiResponseMessages, ApiResponseStatus } from '../utils/apiResponse';
@@ -134,7 +136,6 @@ export class NeckAngleController {
     }
 
     try {
-      const { Utils } = await import('../utils/utils');
       const report = Utils.currentDayAverageNeckAngleTextReport(Number(neckAngle));
 
       res.status(200).json({

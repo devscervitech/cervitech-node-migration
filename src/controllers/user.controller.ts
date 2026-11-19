@@ -154,19 +154,6 @@ export class UserController {
   }
 
   // -------------------------
-  // Delete all users
-  // -------------------------
-  static async deleteAll(req: Request, res: Response): Promise<void> {
-    try {
-      await AppUserService.deleteAllAsync();
-      sendSuccess(res, undefined, 'All accounts deleted successfully.', 200);
-    } catch (error: any) {
-      logger.error('DeleteAll Error:', error);
-      sendError(res, 500, 'Failed to delete all accounts.');
-    }
-  }
-
-  // -------------------------
   // Toggle push notification preference
   // -------------------------
   static async toggleAllowPushNotifications(

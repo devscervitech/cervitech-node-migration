@@ -148,7 +148,7 @@ router.get('/user-goals', authenticateJWT, authorizeRole('APP_USER'), GoalContro
  *       - bearerAuth: []
  *     responses:
  *       200:
- *         description: Targeted average neck angle
+ *         description: Targeted average neck angle, or zero when no goal exists
  *         content:
  *           application/json:
  *             schema:
@@ -160,8 +160,6 @@ router.get('/user-goals', authenticateJWT, authorizeRole('APP_USER'), GoalContro
  *                   type: number
  *       400:
  *         description: Not authenticated
- *       404:
- *         description: No neck angle data found for this user
  *       403:
  *         description: Authenticated app-user token required
  */
