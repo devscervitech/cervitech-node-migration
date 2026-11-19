@@ -11,6 +11,16 @@ import { GooglePlayService, PlayEntitlementStatus } from './googlePlay.service';
 import { logger } from '../utils/logger';
 
 export class TransactionService {
+  private static nextVerificationAt(status: number, now: Date): Date {
+    const intervalMs =
+      status === TRANSACTION_STATUS.Pending
+        ? 15 * 60 * 1000
+        : status === TRANSACTION_STATUS.Completed
+          ? 24 * 60 * 60 * 1000
+          : 60 * 60 * 1000;
+    return new Date(now.getTime() + intervalMs);
+  }
+
   // Define your service methods here
   private static parseTransactionDate(value: unknown): Date {
     if (value instanceof Date) {
@@ -156,7 +166,9 @@ export class TransactionService {
           409
         );
       }
+      if (existingByRef.status !== status) existingByRef.statusChangedAt = new Date();
       existingByRef.status = status;
+      existingByRef.nextVerificationAt = this.nextVerificationAt(status, new Date());
       await existingByRef.save();
       // Same user, same token, already on file — idempotent replay (e.g. a
       // restore-purchases call, or the client retrying after a timeout on
@@ -179,6 +191,8 @@ export class TransactionService {
       purchaseToken,
       packageName,
       subscriptionId,
+      statusChangedAt: new Date(),
+      nextVerificationAt: this.nextVerificationAt(status, new Date()),
     });
 
     try {
@@ -197,11 +211,14 @@ export class TransactionService {
     return AppUserService.getAppUserResponse(appUserId);
   }
 
-  // Grants hasPaid for a Completed transaction, guarding against granting
-  // twice if the same record is ever re-processed (e.g. a future status
-  // re-check via the Play Developer API).
-  private static async grantEntitlement(transaction: ITransactionRecord): Promise<AppUserResponse> {
+  // Grants hasPaid for a transaction Play has just verified as entitled.
+  // The first grant is recorded on the record so it runs once. A record that
+  // was already granted still restores hasPaid if it has since been revoked
+  // (B12: a lapse and recovery on the same purchase token used to leave a
+  // paying user locked out — both here on restore and in the sync job).
+  static async grantEntitlement(transaction: ITransactionRecord): Promise<AppUserResponse> {
     if (transaction.entitlementGranted) {
+      await AppUserService.ensurePaidEntitlement(transaction.appUserId);
       return AppUserService.getAppUserResponse(transaction.appUserId);
     }
 

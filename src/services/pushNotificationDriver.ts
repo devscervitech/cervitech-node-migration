@@ -36,8 +36,14 @@ function isExpoPushToken(token: unknown): token is string {
 }
 
 export async function clearInvalidToken(token: string) {
+  await clearInvalidTokens([token]);
+}
+
+export async function clearInvalidTokens(tokens: string[]) {
+  const unique = [...new Set(tokens)];
+  if (unique.length === 0) return;
   try {
-    await AppUser.updateMany({ fcmToken: token }, { $unset: { fcmToken: '' } });
+    await AppUser.updateMany({ fcmToken: { $in: unique } }, { $unset: { fcmToken: '' } });
   } catch (e: any) {
     logger.error(`Failed to clear invalid push token: ${e.message}`);
   }
@@ -94,6 +100,10 @@ export class PushNotificationDriver {
     for (let start = 0; start < messages.length; start += MAX_TOKENS_PER_REQUEST) {
       const chunk = messages.slice(start, start + MAX_TOKENS_PER_REQUEST);
       const chunkIndexes = sendableIndexes.slice(start, start + MAX_TOKENS_PER_REQUEST);
+      // B12: audit entries and dead tokens are collected per chunk and
+      // written once, instead of one awaited write per ticket.
+      const auditEntries: AuditEntry[] = [];
+      const unregisteredTokens: string[] = [];
 
       try {
         const response = await axios.post(EXPO_PUSH_URL, chunk, {
@@ -101,7 +111,9 @@ export class PushNotificationDriver {
         });
         const tickets: ExpoTicket[] = response.data?.data ?? [];
 
-        for (let j = 0; j < tickets.length; j++) {
+        // Expo returns one ticket per message; never index past what we sent.
+        const ticketCount = Math.min(tickets.length, chunkIndexes.length);
+        for (let j = 0; j < ticketCount; j++) {
           const ticket = tickets[j];
           const modelIndex = chunkIndexes[j];
           const model = models[modelIndex];
@@ -109,13 +121,13 @@ export class PushNotificationDriver {
           if (ticket.status === 'ok') {
             delivered[modelIndex] = true;
             ticketIds[modelIndex] = ticket.id ?? null;
-            await logPush(model, 'pending', ticket.id, undefined);
+            auditEntries.push(auditEntry(model, 'pending', ticket.id, undefined));
           } else {
             const error = ticket.details?.error ?? ticket.message ?? 'Expo push error';
             logger.error(`Expo push error for token ${model.to}: ${error}`);
-            await logPush(model, 'failed', undefined, error);
+            auditEntries.push(auditEntry(model, 'failed', undefined, error));
             if (ticket.details?.error === 'DeviceNotRegistered') {
-              await clearInvalidToken(model.to);
+              unregisteredTokens.push(model.to);
             }
           }
         }
@@ -127,9 +139,12 @@ export class PushNotificationDriver {
         // failed instead, so the push is visible in the log and health view.
         failedChunks.push({ error: message, messageCount: chunk.length });
         for (const modelIndex of chunkIndexes) {
-          await logPush(models[modelIndex], 'failed', undefined, message);
+          auditEntries.push(auditEntry(models[modelIndex], 'failed', undefined, message));
         }
       }
+
+      await writeAuditEntries(auditEntries);
+      await clearInvalidTokens(unregisteredTokens);
     }
 
     if (failedChunks.length > 0) {
@@ -171,22 +186,36 @@ export class PushNotificationDriver {
   }
 }
 
-async function logPush(
+type AuditEntry = {
+  token: string;
+  title: string;
+  dataType: string | undefined;
+  ticketId: string | undefined;
+  status: 'pending' | 'failed';
+  error: string | undefined;
+};
+
+function auditEntry(
   model: PushNotificationModelDTO,
   status: 'pending' | 'failed',
   ticketId: string | undefined,
   error: string | undefined
-): Promise<void> {
+): AuditEntry {
+  return {
+    token: model.to,
+    title: model.title,
+    dataType: model.data?.type as string | undefined,
+    ticketId,
+    status,
+    error,
+  };
+}
+
+async function writeAuditEntries(entries: AuditEntry[]): Promise<void> {
+  if (entries.length === 0) return;
   try {
-    const log = new PushNotificationLog({
-      token: model.to,
-      title: model.title,
-      dataType: model.data?.type as string | undefined,
-      ticketId,
-      status,
-      error,
-    });
-    await log.save();
+    // ordered: false — one bad entry must not drop the rest of the chunk's audit.
+    await PushNotificationLog.insertMany(entries, { ordered: false });
   } catch (e: any) {
     logger.error(`Failed to write push audit log: ${e.message}`);
   }

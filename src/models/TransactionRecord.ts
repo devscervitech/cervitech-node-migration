@@ -13,6 +13,9 @@ export interface ITransactionRecord extends Document {
   // purchase token rather than the client. Only these records are eligible
   // for the subscription-sync job's periodic re-verification.
   purchaseToken?: string;
+  nextVerificationAt?: Date;
+  statusChangedAt?: Date;
+  updatedAt?: Date;
   packageName?: string;
   subscriptionId?: string;
   createdOn: Date;
@@ -21,7 +24,8 @@ export interface ITransactionRecord extends Document {
 }
 
 const TransactionRecordSchema = new Schema<ITransactionRecord>({
-  appUserId: { type: String, required: true },
+  // B12: read by the per-user list endpoint and grouped on by the sync job.
+  appUserId: { type: String, required: true, index: true },
   paymentRef: { type: String, required: true, unique: true },
   amount: { type: Number, required: true },
   status: { type: Number, enum: Object.values(TRANSACTION_STATUS), required: true },
@@ -31,6 +35,9 @@ const TransactionRecordSchema = new Schema<ITransactionRecord>({
   // (e.g. a future status re-check via #08/#09 re-processing the same record).
   entitlementGranted: { type: Boolean, default: false },
   purchaseToken: { type: String },
+  // B12: schedules the next Play verification by entitlement state.
+  nextVerificationAt: { type: Date },
+  statusChangedAt: { type: Date },
   packageName: { type: String },
   subscriptionId: { type: String },
   createdOn: { type: Date, default: Date.now },
@@ -38,6 +45,17 @@ const TransactionRecordSchema = new Schema<ITransactionRecord>({
   deletedOn: { type: Date },
 },
 { timestamps: true });
+
+TransactionRecordSchema.index(
+  { appUserId: 1, status: 1, nextVerificationAt: 1, statusChangedAt: 1 },
+  { partialFilterExpression: { purchaseToken: { $type: 'string' } } }
+);
+// B12: the cross-user sync cursor filters by active/failed status and due time;
+// this index avoids fetching future subscription rows on every 15-minute run.
+TransactionRecordSchema.index(
+  { status: 1, nextVerificationAt: 1, appUserId: 1, statusChangedAt: 1 },
+  { partialFilterExpression: { purchaseToken: { $type: 'string' } } }
+);
 
 const TransactionRecord = mongoose.model<ITransactionRecord>('TransactionRecord', TransactionRecordSchema);
 export default TransactionRecord;

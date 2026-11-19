@@ -1,17 +1,41 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const sendPushNotification = vi.fn();
 const findById = vi.fn();
 const findOne = vi.fn();
-const updateOne = vi.fn();
-const recordFind = vi.fn();
-const reportSave = vi.fn();
+const updateGoal = vi.fn();
+const reportUpsert = vi.fn();
+const recordAggregate = vi.fn();
+const sendBatch = vi.fn();
+const dueGoals: any[] = [];
+const legacyGoals: any[] = [];
+const storedGoals = new Map<string, any>();
+const reports = new Map<string, any>();
+
+const cursorFor = (items: any[]) => {
+  const cursor = {
+    async *[Symbol.asyncIterator]() {
+      for (const item of items) yield item;
+    },
+    close: vi.fn(async () => undefined),
+  };
+  return cursor;
+};
 
 vi.mock('../../src/models/Goal', () => ({
   Goal: {
-    find: vi.fn(),
+    find: vi.fn((criteria: any) => {
+      const query: any = {
+        select: vi.fn(() => query),
+        cursor: (options: unknown) => {
+          query.cursorOptions = options;
+          const items = criteria.nextCycleEndsAt?.$exists ? dueGoals : legacyGoals;
+          return cursorFor(items);
+        },
+      };
+      return query;
+    }),
     findOne: (...args: unknown[]) => findOne(...args),
-    updateOne: (...args: unknown[]) => updateOne(...args),
+    updateOne: (...args: unknown[]) => updateGoal(...args),
   },
 }));
 
@@ -20,20 +44,15 @@ vi.mock('../../src/models/AppUser', () => ({
 }));
 
 vi.mock('../../src/models/NeckAngleRecord', () => ({
-  NeckAngleRecordModel: { find: (...args: unknown[]) => recordFind(...args) },
+  NeckAngleRecordModel: { aggregate: (...args: unknown[]) => recordAggregate(...args) },
 }));
 
 vi.mock('../../src/models/GoalCycleCompletionReport', () => ({
-  GoalCycleCompletionReport: vi.fn(function (this: any, fields: unknown) {
-    Object.assign(this, fields as object);
-    this.save = reportSave;
-  }),
+  GoalCycleCompletionReport: { updateOne: (...args: unknown[]) => reportUpsert(...args) },
 }));
 
 vi.mock('../../src/services/pushNotificationDriver', () => ({
-  PushNotificationDriver: {
-    sendPushNotification: (...args: unknown[]) => sendPushNotification(...args),
-  },
+  PushNotificationDriver: { sendBatch: (...args: unknown[]) => sendBatch(...args) },
 }));
 
 import { Goal } from '../../src/models/Goal';
@@ -45,55 +64,87 @@ import { runGoalCycleSummary } from '../../src/services/goalCycleSummary.service
 const NOW = new Date('2026-08-17T08:00:00Z');
 const CYCLE_END = new Date('2026-08-16T23:59:59.999Z');
 
+const activeUser = (id: string, token?: string, isGoalOn = true) => ({
+  _id: id,
+  isGoalOn,
+  fcmToken: token,
+  allowPushNotifications: true,
+});
+const dueGoal = (id = 'g1', appUserId = 'u1', extra: Record<string, unknown> = {}) => {
+  const goal: any = {
+    _id: id,
+    appUserId,
+    targetedAverageNeckAngle: 80,
+    frequency: 'WEEKLY',
+    dateSet: new Date('2026-08-10T14:30:00Z'),
+    nextCycleEndsAt: CYCLE_END,
+    ...extra,
+  };
+  storedGoals.set(id, goal);
+  return goal;
+};
+const sentPushes = () => sendBatch.mock.calls.flatMap((call) => call[0] as unknown[]);
+
 beforeEach(() => {
   vi.clearAllMocks();
+  dueGoals.length = 0;
+  legacyGoals.length = 0;
+  storedGoals.clear();
+  reports.clear();
+  findById.mockResolvedValue(activeUser('u1', 'ExponentPushToken[abc]'));
+  findOne.mockReturnValue({ sort: () => ({ select: () => Promise.resolve({ _id: 'g1' }) }) });
+  updateGoal.mockImplementation(async (filter: any, update: any) => {
+    const goal = storedGoals.get(String(filter._id));
+    if (!goal) return { modifiedCount: 0 };
+    const expected = filter.nextCycleEndsAt;
+    const matches = expected && typeof expected === 'object' && '$exists' in expected
+      ? expected.$exists === false && !goal.nextCycleEndsAt
+      : goal.nextCycleEndsAt instanceof Date && goal.nextCycleEndsAt.getTime() === expected.getTime();
+    if (!matches) return { modifiedCount: 0 };
+    Object.assign(goal, update.$set);
+    return { modifiedCount: 1 };
+  });
+  reportUpsert.mockImplementation(async (filter: any, update: any) => {
+    const key = `${String(filter.goalId)}:${new Date(filter.dateOfConcludedCycle).toISOString()}`;
+    if (reports.has(key)) return { upsertedCount: 0 };
+    reports.set(key, update.$setOnInsert);
+    return { upsertedCount: 1 };
+  });
+  recordAggregate.mockResolvedValue([]);
+  sendBatch.mockResolvedValue({ delivered: [], ticketIds: [] });
 });
 
+const recordsAre = (records: { angle: number }[]) =>
+  recordAggregate.mockResolvedValue(
+    records.length === 0
+      ? []
+      : [{ _id: null, total: records.reduce((sum, record) => sum + record.angle, 0), count: records.length }]
+  );
+
 describe('runGoalCycleSummary', () => {
-  it('concludes a due weekly goal: report saved, marker advanced, scorecard push sent', async () => {
-    const goal = {
-      _id: 'g1',
-      appUserId: 'u1',
-      targetedAverageNeckAngle: 80,
-      frequency: 'WEEKLY',
-      dateSet: new Date('2026-08-10T14:30:00Z'),
-      nextCycleEndsAt: CYCLE_END,
-    };
-    (Goal.find as ReturnType<typeof vi.fn>).mockImplementation((criteria: unknown) =>
-      criteria && (criteria as { nextCycleEndsAt?: { $exists?: boolean } }).nextCycleEndsAt?.$exists
-        ? [goal]
-        : []
+  it('writes the scorecard before advancing a due goal and sends the notification', async () => {
+    dueGoals.push(dueGoal());
+    recordsAre([{ angle: 70 }, { angle: 90 }]);
+
+    expect(await runGoalCycleSummary(NOW)).toBe(1);
+
+    expect(reportUpsert).toHaveBeenCalledWith(
+      { goalId: 'g1', dateOfConcludedCycle: CYCLE_END },
+      {
+        $setOnInsert: {
+          actualAverageNeckAngle: 80,
+          complianceInPercentage: 100,
+          dateOfConcludedCycle: CYCLE_END,
+          goalId: 'g1',
+        },
+      },
+      { upsert: true }
     );
-    findById.mockResolvedValue({
-      _id: 'u1',
-      isGoalOn: true,
-      fcmToken: 'ExponentPushToken[abc]',
-      allowPushNotifications: true,
-    });
-    findOne.mockReturnValue({
-      sort: () => ({ select: () => Promise.resolve({ _id: 'g1' }) }),
-    });
-    recordFind.mockResolvedValue([
-      { angle: 70, dateTimeRecorded: new Date('2026-08-12T10:00:00Z') },
-      { angle: 90, dateTimeRecorded: new Date('2026-08-15T10:00:00Z') },
-    ]);
-    updateOne.mockResolvedValue({});
-
-    const concluded = await runGoalCycleSummary(NOW);
-
-    expect(concluded).toBe(1);
-    expect(GoalCycleCompletionReport).toHaveBeenCalledWith({
-      actualAverageNeckAngle: 80,
-      complianceInPercentage: 100,
-      dateOfConcludedCycle: CYCLE_END,
-      goalId: 'g1',
-    });
-    expect(reportSave).toHaveBeenCalled();
-    expect(updateOne).toHaveBeenCalledWith(
-      { _id: 'g1' },
+    expect(updateGoal).toHaveBeenCalledWith(
+      { _id: 'g1', nextCycleEndsAt: CYCLE_END },
       { $set: { nextCycleEndsAt: new Date('2026-08-23T23:59:59.999Z') } }
     );
-    expect(sendPushNotification).toHaveBeenCalledWith(
+    expect(sentPushes()).toContainEqual(
       expect.objectContaining({
         to: 'ExponentPushToken[abc]',
         title: 'Your goal report 🎯',
@@ -101,195 +152,147 @@ describe('runGoalCycleSummary', () => {
         data: { type: 'goal_cycle_report', frequency: 'WEEKLY' },
       })
     );
-    expect(recordFind).toHaveBeenCalledWith({
-      appUserId: 'u1',
-      dateTimeRecorded: { $gte: new Date('2026-08-09T23:59:59.999Z'), $lt: CYCLE_END },
+    expect(recordAggregate.mock.calls[0][0][0]).toEqual({
+      $match: {
+        appUserId: 'u1',
+        dateTimeRecorded: { $gte: new Date('2026-08-09T23:59:59.999Z'), $lt: CYCLE_END },
+      },
     });
   });
 
-  it('skips users whose goal is turned off: no report, no push', async () => {
-    (Goal.find as ReturnType<typeof vi.fn>).mockImplementation((criteria: unknown) =>
-      criteria && (criteria as { nextCycleEndsAt?: { $exists?: boolean } }).nextCycleEndsAt?.$exists
-        ? [
-            {
-              _id: 'g1',
-              appUserId: 'u1',
-              targetedAverageNeckAngle: 80,
-              frequency: 'WEEKLY',
-              dateSet: new Date('2026-08-10T14:30:00Z'),
-              nextCycleEndsAt: CYCLE_END,
-            },
-          ]
-        : []
+  it('advances an inactive due goal so it is not loaded as due every day', async () => {
+    dueGoals.push(dueGoal());
+    findById.mockResolvedValue(activeUser('u1', 'ExponentPushToken[abc]', false));
+
+    expect(await runGoalCycleSummary(NOW)).toBe(0);
+    expect(updateGoal).toHaveBeenCalledWith(
+      { _id: 'g1', nextCycleEndsAt: CYCLE_END },
+      { $set: { nextCycleEndsAt: new Date('2026-08-23T23:59:59.999Z') } }
     );
-    findById.mockResolvedValue({
-      _id: 'u1',
-      isGoalOn: false,
-      fcmToken: 'ExponentPushToken[abc]',
-      allowPushNotifications: true,
-    });
-
-    const concluded = await runGoalCycleSummary(NOW);
-
-    expect(concluded).toBe(0);
-    expect(GoalCycleCompletionReport).not.toHaveBeenCalled();
-    expect(updateOne).not.toHaveBeenCalled();
-    expect(sendPushNotification).not.toHaveBeenCalled();
+    expect(reportUpsert).not.toHaveBeenCalled();
   });
 
-  it('skips a stale goal that is not the user\u2019s latest: no report, no push', async () => {
-    (Goal.find as ReturnType<typeof vi.fn>).mockImplementation((criteria: unknown) =>
-      criteria && (criteria as { nextCycleEndsAt?: { $exists?: boolean } }).nextCycleEndsAt?.$exists
-        ? [
-            {
-              _id: 'g1',
-              appUserId: 'u1',
-              targetedAverageNeckAngle: 80,
-              frequency: 'WEEKLY',
-              dateSet: new Date('2026-08-10T14:30:00Z'),
-              nextCycleEndsAt: CYCLE_END,
-            },
-          ]
-        : []
-    );
-    findById.mockResolvedValue({
-      _id: 'u1',
-      isGoalOn: true,
-      fcmToken: 'ExponentPushToken[abc]',
-      allowPushNotifications: true,
-    });
+  it('advances a superseded goal without creating an obsolete report', async () => {
+    dueGoals.push(dueGoal());
     findOne.mockReturnValue({ sort: () => ({ select: () => Promise.resolve({ _id: 'g2' }) }) });
 
-    const concluded = await runGoalCycleSummary(NOW);
-
-    expect(concluded).toBe(0);
-    expect(GoalCycleCompletionReport).not.toHaveBeenCalled();
+    expect(await runGoalCycleSummary(NOW)).toBe(0);
+    expect(updateGoal).toHaveBeenCalled();
+    expect(reportUpsert).not.toHaveBeenCalled();
   });
 
-  it('writes the report and advances the marker even when the user has no token (push skipped)', async () => {
-    const goal = {
-      _id: 'g1',
-      appUserId: 'u1',
-      targetedAverageNeckAngle: 80,
-      frequency: 'DAILY',
-      dateSet: new Date('2026-08-13T14:30:00Z'),
-      nextCycleEndsAt: new Date('2026-08-13T23:59:59.999Z'),
-    };
-    (Goal.find as ReturnType<typeof vi.fn>).mockImplementation((criteria: unknown) =>
-      criteria && (criteria as { nextCycleEndsAt?: { $exists?: boolean } }).nextCycleEndsAt?.$exists
-        ? [goal]
-        : []
-    );
-    findById.mockResolvedValue({
-      _id: 'u1',
-      isGoalOn: true,
-      fcmToken: undefined,
-      allowPushNotifications: true,
-    });
-    findOne.mockReturnValue({ sort: () => ({ select: () => Promise.resolve({ _id: 'g1' }) }) });
-    recordFind.mockResolvedValue([
-      { angle: 80, dateTimeRecorded: new Date('2026-08-13T10:00:00Z') },
-    ]);
+  it('keeps the durable scorecard even when the user has no push token', async () => {
+    dueGoals.push(dueGoal());
+    findById.mockResolvedValue(activeUser('u1'));
+    recordsAre([{ angle: 80 }]);
 
-    const concluded = await runGoalCycleSummary(NOW);
-
-    expect(concluded).toBe(1);
-    expect(GoalCycleCompletionReport).toHaveBeenCalledWith({
-      actualAverageNeckAngle: 80,
-      complianceInPercentage: 100,
-      dateOfConcludedCycle: new Date('2026-08-13T23:59:59.999Z'),
-      goalId: 'g1',
-    });
-    expect(updateOne).toHaveBeenCalledWith(
-      { _id: 'g1' },
-      { $set: { nextCycleEndsAt: new Date('2026-08-14T23:59:59.999Z') } }
-    );
-    expect(sendPushNotification).not.toHaveBeenCalled();
+    expect(await runGoalCycleSummary(NOW)).toBe(1);
+    expect(reports.size).toBe(1);
+    expect(sendBatch).not.toHaveBeenCalled();
   });
 
-  it('concludes a cycle with zero records as a 0/100 scorecard', async () => {
-    const goal = {
-      _id: 'g1',
-      appUserId: 'u1',
-      targetedAverageNeckAngle: 80,
-      frequency: 'DAILY',
-      dateSet: new Date('2026-08-13T14:30:00Z'),
-      nextCycleEndsAt: new Date('2026-08-13T23:59:59.999Z'),
-    };
-    (Goal.find as ReturnType<typeof vi.fn>).mockImplementation((criteria: unknown) =>
-      criteria && (criteria as { nextCycleEndsAt?: { $exists?: boolean } }).nextCycleEndsAt?.$exists
-        ? [goal]
-        : []
-    );
-    findById.mockResolvedValue({
-      _id: 'u1',
-      isGoalOn: true,
-      fcmToken: 'ExponentPushToken[abc]',
-      allowPushNotifications: true,
-    });
-    findOne.mockReturnValue({ sort: () => ({ select: () => Promise.resolve({ _id: 'g1' }) }) });
-    recordFind.mockResolvedValue([]);
+  it('records a 0 score for a cycle with no readings', async () => {
+    dueGoals.push(dueGoal());
+    recordsAre([]);
 
-    const concluded = await runGoalCycleSummary(NOW);
-
-    expect(concluded).toBe(1);
-    expect(GoalCycleCompletionReport).toHaveBeenCalledWith({
+    expect(await runGoalCycleSummary(NOW)).toBe(1);
+    expect([...reports.values()][0]).toMatchObject({
       actualAverageNeckAngle: 0,
       complianceInPercentage: 0,
-      dateOfConcludedCycle: new Date('2026-08-13T23:59:59.999Z'),
-      goalId: 'g1',
     });
-    expect(sendPushNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ body: 'You scored 0/100 today — keep it up!' })
-    );
   });
 
-  it('initialises legacy goals (no marker) at the most recent concluded cycle end', async () => {
-    const legacyGoal = {
-      _id: 'g1',
-      appUserId: 'u1',
-      targetedAverageNeckAngle: 80,
+  it('reports the most recent concluded cycle for a legacy goal and advances its marker', async () => {
+    const goal = dueGoal('g1', 'u1', {
       frequency: 'WEEKLY',
-      dateSet: new Date('2026-07-13T14:30:00Z'), // 5 weeks before NOW
-    };
-    (Goal.find as ReturnType<typeof vi.fn>).mockImplementation((criteria: unknown) =>
-      criteria && (criteria as { nextCycleEndsAt?: { $exists?: boolean } }).nextCycleEndsAt?.$exists
-        ? []
-        : [legacyGoal]
-    );
-    findById.mockResolvedValue({
-      _id: 'u1',
-      isGoalOn: true,
-      fcmToken: 'ExponentPushToken[abc]',
-      allowPushNotifications: true,
+      dateSet: new Date('2026-07-13T14:30:00Z'),
+      nextCycleEndsAt: undefined,
     });
-    findOne.mockReturnValue({ sort: () => ({ select: () => Promise.resolve({ _id: 'g1' }) }) });
-    recordFind.mockResolvedValue([
-      { angle: 72, dateTimeRecorded: new Date('2026-08-12T10:00:00Z') },
-    ]);
+    delete goal.nextCycleEndsAt;
+    legacyGoals.push(goal);
+    recordsAre([{ angle: 72 }]);
 
-    const concluded = await runGoalCycleSummary(NOW);
-
-    expect(concluded).toBe(1);
-    const reportArgs = (GoalCycleCompletionReport as unknown as ReturnType<typeof vi.fn>).mock
-      .calls[0][0];
-    expect(new Date(reportArgs.dateOfConcludedCycle).toISOString()).toBe(
-      '2026-08-16T23:59:59.999Z'
-    );
-    expect(reportArgs.complianceInPercentage).toBe(90);
-    expect(updateOne).toHaveBeenCalledWith(
-      { _id: 'g1' },
+    expect(await runGoalCycleSummary(NOW)).toBe(1);
+    expect([...reports.values()][0].dateOfConcludedCycle).toEqual(CYCLE_END);
+    expect(updateGoal).toHaveBeenCalledWith(
+      { _id: 'g1', nextCycleEndsAt: { $exists: false } },
       { $set: { nextCycleEndsAt: new Date('2026-08-23T23:59:59.999Z') } }
     );
   });
 
-  it('does nothing when no goals are due', async () => {
-    (Goal.find as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+  it('stamps a legacy goal whose first cycle has not ended without a premature report', async () => {
+    const goal = dueGoal('g1', 'u1', {
+      frequency: 'DAILY',
+      dateSet: new Date('2026-08-17T07:00:00Z'),
+      nextCycleEndsAt: undefined,
+    });
+    delete goal.nextCycleEndsAt;
+    legacyGoals.push(goal);
 
-    const concluded = await runGoalCycleSummary(NOW);
+    expect(await runGoalCycleSummary(NOW)).toBe(0);
+    expect(reportUpsert).not.toHaveBeenCalled();
+    expect(goal.nextCycleEndsAt).toEqual(new Date('2026-08-17T23:59:59.999Z'));
+  });
 
-    expect(concluded).toBe(0);
-    expect(GoalCycleCompletionReport).not.toHaveBeenCalled();
-    expect(sendPushNotification).not.toHaveBeenCalled();
+  it('streams only supported goals with a projection and bounded cursor batch size', async () => {
+    await runGoalCycleSummary(NOW);
+    const calls = (Goal.find as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls).toHaveLength(2);
+    for (const [filter] of calls) expect(filter.frequency).toEqual({ $in: ['DAILY', 'WEEKLY'] });
+    const query = (Goal.find as ReturnType<typeof vi.fn>).mock.results[0].value;
+    expect(query.cursorOptions).toEqual({ batchSize: 200 });
+    expect(query.select).toHaveBeenCalledWith(
+      '_id appUserId targetedAverageNeckAngle frequency dateSet nextCycleEndsAt'
+    );
+  });
+
+  it('leaves a due marker unchanged if aggregation/report persistence fails so a later run retries', async () => {
+    const goal = dueGoal();
+    dueGoals.push(goal);
+    recordAggregate.mockRejectedValue(new Error('database unavailable'));
+
+    expect(await runGoalCycleSummary(NOW)).toBe(0);
+    expect(goal.nextCycleEndsAt).toEqual(CYCLE_END);
+    expect(reportUpsert).not.toHaveBeenCalled();
+  });
+
+  it('does not create a duplicate report on a retry after the report already exists', async () => {
+    const goal = dueGoal();
+    dueGoals.push(goal);
+    const key = `g1:${CYCLE_END.toISOString()}`;
+    reports.set(key, { actualAverageNeckAngle: 80, complianceInPercentage: 100 });
+
+    expect(await runGoalCycleSummary(NOW)).toBe(1);
+    expect(reports.size).toBe(1);
+    expect(goal.nextCycleEndsAt).toEqual(new Date('2026-08-23T23:59:59.999Z'));
+    expect(sendBatch).not.toHaveBeenCalled();
+  });
+
+  it('eventually visits all markerless legacy goals without keeping them in memory as one array', async () => {
+    legacyGoals.push(
+      ...Array.from({ length: 450 }, (_, index) =>
+        dueGoal(`g${index}`, `u${index}`, {
+          frequency: 'DAILY',
+          dateSet: new Date('2026-08-15T12:00:00Z'),
+          nextCycleEndsAt: undefined,
+        })
+      )
+    );
+    findById.mockImplementation(async (id: string) => activeUser(id, undefined, false));
+
+    expect(await runGoalCycleSummary(NOW)).toBe(0);
+    expect(updateGoal).toHaveBeenCalledTimes(450);
+    expect(legacyGoals.every((goal) => goal.nextCycleEndsAt instanceof Date)).toBe(true);
+  });
+
+  it('does not advance a marker if another worker already changed it', async () => {
+    const goal = dueGoal();
+    dueGoals.push(goal);
+    updateGoal.mockResolvedValue({ modifiedCount: 0 });
+    recordsAre([{ angle: 80 }]);
+
+    expect(await runGoalCycleSummary(NOW)).toBe(0);
+    expect(reportUpsert).toHaveBeenCalledTimes(1);
+    expect(sendBatch).not.toHaveBeenCalled();
   });
 });

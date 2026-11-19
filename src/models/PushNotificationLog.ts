@@ -30,6 +30,9 @@ export const PushNotificationLogSchema = new Schema<IPushNotificationLog>({
   deliveredAt: { type: Date },
 });
 
+// B12: receipt polling reads pending logs by sentAt and requires a ticket ID.
+PushNotificationLogSchema.index({ status: 1, sentAt: 1, ticketId: 1 });
+
 export const PushNotificationLog =
   mongoose.models.PushNotificationLog ||
   mongoose.model<IPushNotificationLog>('PushNotificationLog', PushNotificationLogSchema);

@@ -1,9 +1,8 @@
-import cron from 'node-cron';
 import AppUser from '../models/AppUser';
 import { NeckAngleRecordModel } from '../models/NeckAngleRecord';
 import { PushNotificationDriver } from '../services/pushNotificationDriver';
 import { PushNotificationModelDTO } from '../types/pushNotificationModel.types';
-import { logger } from '../utils/logger';
+import { scheduleExclusiveJob } from './jobLock';
 
 // Throttling: never re-send the same nudge to the same user more often
 // than this, regardless of how often the cron itself runs.
@@ -25,129 +24,168 @@ const MIN_SAMPLES_FOR_ALERT = 3;
 // "Poor" cutoff in src/utils/utils.ts -> compareAverageNeckAngle).
 const BAD_POSTURE_SCORE_THRESHOLD = 30;
 
-function hoursAgo(hours: number): Date {
-  return new Date(Date.now() - hours * 60 * 60 * 1000);
-}
-
-function isDue(lastSentAt: Date | undefined, cooldownHours: number): boolean {
-  return !lastSentAt || lastSentAt < hoursAgo(cooldownHours);
-}
+// B12: candidates are streamed and handled this many at a time — one
+// readings query and one push batch per chunk instead of one query per user.
+export const CANDIDATE_CHUNK_SIZE = 500;
 
 /**
- * Nudges users who signed up but never turned a goal on.
- * Runs daily at 10:00 UTC.
+ * Users with a usable push token. AuthService.logout and registration write
+ * `''` rather than unsetting the field, so `$ne: null` alone let logged-out
+ * users through to be discarded later by the driver.
  */
-export const startGoalReminderJob = () => {
-  cron.schedule('0 10 * * *', async () => {
-    logger.info('Running goal-not-set reminder job...');
-    try {
-      const candidates = await AppUser.find({
-        isGoalOn: false,
-        fcmToken: { $exists: true, $ne: null },
-        allowPushNotifications: true,
-        deleted: { $ne: true },
-        dateRegistered: { $lt: hoursAgo(MIN_ACCOUNT_AGE_HOURS) },
-      });
+export const HAS_PUSH_TOKEN = { $type: 'string', $gt: '' };
 
-      const due = candidates.filter((u) => isDue(u.lastGoalReminderSentAt, GOAL_REMINDER_COOLDOWN_HOURS));
-      if (due.length === 0) {
-        logger.info('Goal reminder job: nobody due.');
-        return;
+function hoursBefore(now: Date, hours: number): Date {
+  return new Date(now.getTime() - hours * 60 * 60 * 1000);
+}
+
+/** Never sent, or last sent before `cutoff` (the old isDue(), in the query). */
+function notSentSince(field: string, cutoff: Date) {
+  return { $or: [{ [field]: null }, { [field]: { $lt: cutoff } }] };
+}
+
+type Candidate = {
+  _id: unknown;
+  fcmToken: string;
+  isGoalOn?: boolean;
+  goals?: { dateSet: Date; targetedAverageNeckAngle: number }[];
+};
+
+export type ReminderRunSummary = { due: number; sent: number };
+
+async function forEachCandidateChunk(
+  filter: Record<string, unknown>,
+  fields: string,
+  handle: (chunk: Candidate[]) => Promise<void>,
+  signal?: AbortSignal
+): Promise<void> {
+  const cursor = AppUser.find(filter).select(fields).lean().cursor();
+  let chunk: Candidate[] = [];
+  try {
+    for await (const user of cursor) {
+      if (signal?.aborted) throw signal.reason ?? new Error('Push reminder job was aborted.');
+      chunk.push(user as unknown as Candidate);
+      if (chunk.length >= CANDIDATE_CHUNK_SIZE) {
+        await handle(chunk);
+        chunk = [];
       }
+    }
+    if (chunk.length > 0) await handle(chunk);
+  } finally {
+    await cursor.close().catch(() => {});
+  }
+}
 
-      const messages: PushNotificationModelDTO[] = due.map((u) => ({
+/** Sends the batch and stamps `stampField` on every user Expo accepted. */
+async function sendAndStamp(
+  users: Candidate[],
+  messages: PushNotificationModelDTO[],
+  stampField: string,
+  now: Date,
+  signal?: AbortSignal
+): Promise<number> {
+  if (messages.length === 0) return 0;
+  if (signal?.aborted) throw signal.reason ?? new Error('Push reminder job was aborted.');
+  const results = await PushNotificationDriver.sendBatch(messages);
+  const deliveredIds = users.filter((_, i) => results.delivered[i]).map((u) => u._id);
+  if (deliveredIds.length > 0) {
+    await AppUser.updateMany({ _id: { $in: deliveredIds } }, { $set: { [stampField]: now } });
+  }
+  return deliveredIds.length;
+}
+
+/** Per-user angle totals over [windowStart, now] for one chunk of users. */
+async function recentAngleTotals(
+  userIds: string[],
+  windowStart: Date
+): Promise<Map<string, { total: number; count: number }>> {
+  if (userIds.length === 0) return new Map();
+  const rows = await NeckAngleRecordModel.aggregate<{ _id: string; total: number; count: number }>([
+    { $match: { appUserId: { $in: userIds }, dateTimeRecorded: { $gte: windowStart } } },
+    { $group: { _id: '$appUserId', total: { $sum: '$angle' }, count: { $sum: 1 } } },
+  ]);
+  return new Map(rows.map((r) => [r._id, { total: r.total, count: r.count }]));
+}
+
+/** Nudges users who signed up but never turned a goal on. */
+export async function runGoalReminder(now: Date = new Date(), signal?: AbortSignal): Promise<ReminderRunSummary> {
+  const summary = { due: 0, sent: 0 };
+  await forEachCandidateChunk(
+    {
+      isGoalOn: false,
+      fcmToken: HAS_PUSH_TOKEN,
+      allowPushNotifications: true,
+      deleted: { $ne: true },
+      dateRegistered: { $lt: hoursBefore(now, MIN_ACCOUNT_AGE_HOURS) },
+      ...notSentSince('lastGoalReminderSentAt', hoursBefore(now, GOAL_REMINDER_COOLDOWN_HOURS)),
+    },
+    '_id fcmToken',
+    async (users) => {
+      const messages = users.map((u) => ({
         to: u.fcmToken,
         title: 'Set a posture goal 🎯',
         body: "You haven't set a neck-angle goal yet — pick a target and we'll help you track it.",
         data: { type: 'goal_reminder' },
       }));
-
-      const results = await PushNotificationDriver.sendBatch(messages);
-
-      await Promise.all(
-        due.map((u, i) => {
-          if (!results.delivered[i]) return Promise.resolve();
-          u.lastGoalReminderSentAt = new Date();
-          return u.save();
-        })
-      );
-
-      logger.info(`Goal reminder job: sent ${results.delivered.filter(Boolean).length}/${due.length}.`);
-    } catch (err: any) {
-      logger.error(`Error in goal reminder job: ${err.message}`);
-    }
-  });
-};
+      summary.due += users.length;
+      summary.sent += await sendAndStamp(users, messages, 'lastGoalReminderSentAt', now, signal);
+    },
+    signal
+  );
+  return summary;
+}
 
 /**
  * Nudges users (goal on or off) who haven't logged a neck-angle check-in
  * recently. Copy differs slightly depending on whether they have an
- * active goal. Runs daily at 17:00 UTC (afternoon, most timezones).
+ * active goal.
  */
-export const startCheckInReminderJob = () => {
-  cron.schedule('0 17 * * *', async () => {
-    logger.info('Running check-in reminder job...');
-    try {
-      const candidates = await AppUser.find({
-        fcmToken: { $exists: true, $ne: null },
-        allowPushNotifications: true,
-        deleted: { $ne: true },
-        dateRegistered: { $lt: hoursAgo(MIN_ACCOUNT_AGE_HOURS) },
-      });
-
-      const staleCutoff = hoursAgo(CHECKIN_STALE_HOURS);
-      const messages: PushNotificationModelDTO[] = [];
-      const dueUsers: (typeof candidates)[number][] = [];
-
-      for (const user of candidates) {
-        if (!isDue(user.lastCheckInReminderSentAt, CHECKIN_REMINDER_COOLDOWN_HOURS)) continue;
-
-        const lastRecord = await NeckAngleRecordModel.findOne({ appUserId: user._id.toString() })
-          .sort({ dateTimeRecorded: -1 })
-          .select('dateTimeRecorded');
-
-        const hasCheckedInRecently = !!lastRecord && lastRecord.dateTimeRecorded > staleCutoff;
-        if (hasCheckedInRecently) continue;
-
-        dueUsers.push(user);
-        messages.push({
-          to: user.fcmToken,
-          title: user.isGoalOn ? "It's been a while 👋" : 'Quick neck check?',
-          body: user.isGoalOn
-            ? "You haven't logged a neck-angle check-in today — a quick check keeps your goal on track."
-            : "It's been a while since your last neck-angle check. Open CerviTech for a 30-second check-in.",
-          data: { type: 'checkin_reminder' },
-        });
-      }
-
-      if (messages.length === 0) {
-        logger.info('Check-in reminder job: nobody due.');
-        return;
-      }
-
-      const results = await PushNotificationDriver.sendBatch(messages);
-
-      await Promise.all(
-        dueUsers.map((u, i) => {
-          if (!results.delivered[i]) return Promise.resolve();
-          u.lastCheckInReminderSentAt = new Date();
-          return u.save();
-        })
+export async function runCheckInReminder(now: Date = new Date(), signal?: AbortSignal): Promise<ReminderRunSummary> {
+  const summary = { due: 0, sent: 0 };
+  const staleCutoff = hoursBefore(now, CHECKIN_STALE_HOURS);
+  await forEachCandidateChunk(
+    {
+      fcmToken: HAS_PUSH_TOKEN,
+      allowPushNotifications: true,
+      deleted: { $ne: true },
+      dateRegistered: { $lt: hoursBefore(now, MIN_ACCOUNT_AGE_HOURS) },
+      ...notSentSince('lastCheckInReminderSentAt', hoursBefore(now, CHECKIN_REMINDER_COOLDOWN_HOURS)),
+    },
+    '_id fcmToken isGoalOn',
+    async (users) => {
+      // One indexed query for the whole chunk: who has a reading newer than
+      // the cutoff? (Was a findOne per user.)
+      const checkedIn = new Set(
+        (
+          await NeckAngleRecordModel.distinct('appUserId', {
+            appUserId: { $in: users.map((u) => String(u._id)) },
+            dateTimeRecorded: { $gt: staleCutoff },
+          })
+        ).map(String)
       );
-
-      logger.info(`Check-in reminder job: sent ${results.delivered.filter(Boolean).length}/${dueUsers.length}.`);
-    } catch (err: any) {
-      logger.error(`Error in check-in reminder job: ${err.message}`);
-    }
-  });
-};
+      const due = users.filter((u) => !checkedIn.has(String(u._id)));
+      const messages = due.map((u) => ({
+        to: u.fcmToken,
+        title: u.isGoalOn ? "It's been a while 👋" : 'Quick neck check?',
+        body: u.isGoalOn
+          ? "You haven't logged a neck-angle check-in today — a quick check keeps your goal on track."
+          : "It's been a while since your last neck-angle check. Open CerviTech for a 30-second check-in.",
+        data: { type: 'checkin_reminder' },
+      }));
+      summary.due += due.length;
+      summary.sent += await sendAndStamp(due, messages, 'lastCheckInReminderSentAt', now, signal);
+    },
+    signal
+  );
+  return summary;
+}
 
 /**
  * Premium/goal-progress nudge: for users with an active goal (goal-setting
  * is premium-gated client-side, so this is in practice premium users)
  * whose recent posture is trailing their target, sends a nudge naming
- * their actual numbers. Runs every 2 hours; each user is still cooled
- * down independently so this doesn't mean "every 2 hours per user".
+ * their actual numbers. Each user is cooled down independently so this
+ * doesn't mean "every 2 hours per user".
  *
  * NOTE ON "BACKGROUND": there's no continuous OS-level background
  * accelerometer loop here — iOS in particular doesn't allow that for a
@@ -157,41 +195,41 @@ export const startCheckInReminderJob = () => {
  * the frontend), which is the honest, App-Store-compliant version of
  * "background" for this kind of sensor.
  */
-export const startGoalProgressJob = () => {
-  cron.schedule('0 */2 * * *', async () => {
-    logger.info('Running goal-progress reminder job...');
-    try {
-      const candidates = await AppUser.find({
-        isGoalOn: true,
-        fcmToken: { $exists: true, $ne: null },
-        allowPushNotifications: true,
-        deleted: { $ne: true },
-      });
-
-      const windowStart = new Date(Date.now() - RECENT_WINDOW_MINUTES * 60 * 1000);
-      const messages: PushNotificationModelDTO[] = [];
-      const dueUsers: (typeof candidates)[number][] = [];
-
-      for (const user of candidates) {
-        if (!isDue(user.lastGoalReminderSentAt, GOAL_PROGRESS_COOLDOWN_HOURS)) continue;
-
+export async function runGoalProgressReminder(now: Date = new Date(), signal?: AbortSignal): Promise<ReminderRunSummary> {
+  const summary = { due: 0, sent: 0 };
+  const windowStart = new Date(now.getTime() - RECENT_WINDOW_MINUTES * 60 * 1000);
+  await forEachCandidateChunk(
+    {
+      isGoalOn: true,
+      fcmToken: HAS_PUSH_TOKEN,
+      allowPushNotifications: true,
+      deleted: { $ne: true },
+      ...notSentSince('lastGoalReminderSentAt', hoursBefore(now, GOAL_PROGRESS_COOLDOWN_HOURS)),
+    },
+    '_id fcmToken goals.dateSet goals.targetedAverageNeckAngle',
+    async (users) => {
+      const targets = new Map<string, number>();
+      for (const user of users) {
         const goals = [...(user.goals ?? [])].sort(
           (a, b) => new Date(b.dateSet).getTime() - new Date(a.dateSet).getTime()
         );
         const target = goals[0]?.targetedAverageNeckAngle;
-        if (!target) continue;
+        if (target) targets.set(String(user._id), target);
+      }
 
-        const recent = await NeckAngleRecordModel.find({
-          appUserId: user._id.toString(),
-          dateTimeRecorded: { $gte: windowStart },
-        }).select('angle');
+      const totals = await recentAngleTotals([...targets.keys()], windowStart);
+      const due: Candidate[] = [];
+      const messages: PushNotificationModelDTO[] = [];
+      for (const user of users) {
+        const id = String(user._id);
+        const target = targets.get(id);
+        const recent = totals.get(id);
+        if (!target || !recent || recent.count < MIN_SAMPLES_FOR_ALERT) continue;
 
-        if (recent.length < MIN_SAMPLES_FOR_ALERT) continue;
-
-        const avg = Math.round(recent.reduce((sum, r) => sum + r.angle, 0) / recent.length);
+        const avg = Math.round(recent.total / recent.count);
         if (avg >= target) continue; // already meeting the goal, nothing to nudge about
 
-        dueUsers.push(user);
+        due.push(user);
         messages.push({
           to: user.fcmToken,
           title: 'A little off target 🎯',
@@ -199,60 +237,42 @@ export const startGoalProgressJob = () => {
           data: { type: 'goal_progress', avg, target },
         });
       }
-
-      if (messages.length === 0) {
-        logger.info('Goal-progress job: nobody due.');
-        return;
-      }
-
-      const results = await PushNotificationDriver.sendBatch(messages);
-      await Promise.all(
-        dueUsers.map((u, i) => {
-          if (!results.delivered[i]) return Promise.resolve();
-          u.lastGoalReminderSentAt = new Date();
-          return u.save();
-        })
-      );
-      logger.info(`Goal-progress job: sent ${results.delivered.filter(Boolean).length}/${dueUsers.length}.`);
-    } catch (err: any) {
-      logger.error(`Error in goal-progress job: ${err.message}`);
-    }
-  });
-};
+      summary.due += due.length;
+      summary.sent += await sendAndStamp(due, messages, 'lastGoalReminderSentAt', now, signal);
+    },
+    signal
+  );
+  return summary;
+}
 
 /**
  * "Wake up call" for everyone, goal or no goal: if a user's recent
  * readings are trending into Poor/Very Poor territory, nudge them
- * regardless of subscription status. Runs every 2 hours.
+ * regardless of subscription status.
  */
-export const startBadPostureAlertJob = () => {
-  cron.schedule('30 */2 * * *', async () => {
-    logger.info('Running bad-posture alert job...');
-    try {
-      const candidates = await AppUser.find({
-        fcmToken: { $exists: true, $ne: null },
-        allowPushNotifications: true,
-        deleted: { $ne: true },
-      });
-
-      const windowStart = new Date(Date.now() - RECENT_WINDOW_MINUTES * 60 * 1000);
+export async function runBadPostureAlert(now: Date = new Date(), signal?: AbortSignal): Promise<ReminderRunSummary> {
+  const summary = { due: 0, sent: 0 };
+  const windowStart = new Date(now.getTime() - RECENT_WINDOW_MINUTES * 60 * 1000);
+  await forEachCandidateChunk(
+    {
+      fcmToken: HAS_PUSH_TOKEN,
+      allowPushNotifications: true,
+      deleted: { $ne: true },
+      ...notSentSince('lastBadPostureAlertSentAt', hoursBefore(now, BAD_POSTURE_COOLDOWN_HOURS)),
+    },
+    '_id fcmToken',
+    async (users) => {
+      const totals = await recentAngleTotals(users.map((u) => String(u._id)), windowStart);
+      const due: Candidate[] = [];
       const messages: PushNotificationModelDTO[] = [];
-      const dueUsers: (typeof candidates)[number][] = [];
+      for (const user of users) {
+        const recent = totals.get(String(user._id));
+        if (!recent || recent.count < MIN_SAMPLES_FOR_ALERT) continue;
 
-      for (const user of candidates) {
-        if (!isDue(user.lastBadPostureAlertSentAt, BAD_POSTURE_COOLDOWN_HOURS)) continue;
-
-        const recent = await NeckAngleRecordModel.find({
-          appUserId: user._id.toString(),
-          dateTimeRecorded: { $gte: windowStart },
-        }).select('angle');
-
-        if (recent.length < MIN_SAMPLES_FOR_ALERT) continue;
-
-        const avg = Math.round(recent.reduce((sum, r) => sum + r.angle, 0) / recent.length);
+        const avg = Math.round(recent.total / recent.count);
         if (avg >= BAD_POSTURE_SCORE_THRESHOLD) continue;
 
-        dueUsers.push(user);
+        due.push(user);
         messages.push({
           to: user.fcmToken,
           title: 'Neck check ⚠️',
@@ -260,26 +280,38 @@ export const startBadPostureAlertJob = () => {
           data: { type: 'bad_posture_alert', avg },
         });
       }
+      summary.due += due.length;
+      summary.sent += await sendAndStamp(due, messages, 'lastBadPostureAlertSentAt', now, signal);
+    },
+    signal
+  );
+  return summary;
+}
 
-      if (messages.length === 0) {
-        logger.info('Bad-posture alert job: nobody due.');
-        return;
-      }
+const describe = ({ due, sent }: ReminderRunSummary) =>
+  due === 0 ? 'nobody due.' : `sent ${sent}/${due}.`;
 
-      const results = await PushNotificationDriver.sendBatch(messages);
-      await Promise.all(
-        dueUsers.map((u, i) => {
-          if (!results.delivered[i]) return Promise.resolve();
-          u.lastBadPostureAlertSentAt = new Date();
-          return u.save();
-        })
-      );
-      logger.info(`Bad-posture alert job: sent ${results.delivered.filter(Boolean).length}/${dueUsers.length}.`);
-    } catch (err: any) {
-      logger.error(`Error in bad-posture alert job: ${err.message}`);
-    }
-  });
-};
+/** Daily at 10:00. */
+export const startGoalReminderJob = () =>
+  scheduleExclusiveJob('goalReminder', '0 10 * * *', async (_date, signal) => describe(await runGoalReminder(new Date(), signal)));
+
+/** Daily at 17:00 (afternoon, most timezones). */
+export const startCheckInReminderJob = () =>
+  scheduleExclusiveJob('checkInReminder', '0 17 * * *', async (_date, signal) =>
+    describe(await runCheckInReminder(new Date(), signal))
+  );
+
+/** Every 2 hours. */
+export const startGoalProgressJob = () =>
+  scheduleExclusiveJob('goalProgressReminder', '0 */2 * * *', async (_date, signal) =>
+    describe(await runGoalProgressReminder(new Date(), signal))
+  );
+
+/** Every 2 hours, offset by 30 minutes. */
+export const startBadPostureAlertJob = () =>
+  scheduleExclusiveJob('badPostureAlert', '30 */2 * * *', async (_date, signal) =>
+    describe(await runBadPostureAlert(new Date(), signal))
+  );
 
 export const startPushReminderJobs = () => {
   startGoalReminderJob();

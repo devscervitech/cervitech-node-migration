@@ -1,105 +1,150 @@
-import cron from 'node-cron';
 import { PushNotificationLog } from '../models/PushNotificationLog';
-import { clearInvalidToken, PushNotificationDriver } from '../services/pushNotificationDriver';
+import { clearInvalidTokens, PushNotificationDriver } from '../services/pushNotificationDriver';
 import { notifyPushFailure } from '../services/pushAlert.service';
-import { logger } from '../utils/logger';
+import { scheduleExclusiveJob } from './jobLock';
 
-const RECEIPT_MIN_AGE_MS = 15 * 60 * 1000; // Expo receipts are available ~15 min after send
-const RECEIPT_EXPIRY_MS = 24 * 60 * 60 * 1000; // Expo clears push receipts 24 h after send
+const RECEIPT_MIN_AGE_MS = 15 * 60 * 1000;
+const RECEIPT_EXPIRY_MS = 24 * 60 * 60 * 1000;
 const RECEIPT_WINDOW_EXPIRED_ERROR = 'receipt window expired';
+export const RECEIPT_BATCH_SIZE = 500;
+const MAX_FAILURE_DETAILS = 40;
 
-/**
- * One polling pass: asks Expo for delivery receipts for every push that was
- * accepted but not yet confirmed, then updates the audit log — delivered,
- * failed (with the error), or still awaiting confirmation. Pending entries
- * past Expo's 24 h receipt window can never be confirmed (Expo has already
- * discarded the receipts), so they are closed as failed with "receipt window
- * expired" instead of being polled forever. DeviceNotRegistered tokens are
- * cleared so they stop being retried, and any confirmed or expired failures
- * are escalated via notifyPushFailure.
- *
- * Returns the number of audit entries evaluated.
- */
-export async function runPushReceiptPolling(now: Date = new Date()): Promise<number> {
-  const staleCutoff = new Date(now.getTime() - RECEIPT_MIN_AGE_MS);
-  const expiredCutoff = new Date(now.getTime() - RECEIPT_EXPIRY_MS);
-
-  const expiredLogs = await PushNotificationLog.find({
-    status: 'pending',
-    ticketId: { $exists: true },
-    sentAt: { $lte: expiredCutoff },
-  });
-  const pendingLogs = await PushNotificationLog.find({
-    status: 'pending',
-    ticketId: { $exists: true },
-    sentAt: { $gt: expiredCutoff, $lte: staleCutoff },
-  });
-
-  let expiredCount = 0;
-  for (const log of expiredLogs) {
-    log.status = 'failed';
-    log.error = RECEIPT_WINDOW_EXPIRED_ERROR;
-    await log.save();
-    expiredCount++;
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error ? signal.reason : new Error('Push receipt polling was aborted.');
   }
+}
 
-  if (pendingLogs.length === 0 && expiredCount === 0) return 0;
-
+async function processPendingBatch(
+  pendingLogs: any[],
+  now: Date,
+  onFailure: (label: string, error: string) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  throwIfAborted(signal);
   const ticketIds = pendingLogs
     .map((log) => log.ticketId)
     .filter((id): id is string => typeof id === 'string' && id.length > 0);
-
   const receipts = ticketIds.length > 0 ? await PushNotificationDriver.getReceipts(ticketIds) : {};
-
-  let failedCount = 0;
-  const failures: string[] = [];
+  const writes: any[] = [];
+  const invalidTokens: string[] = [];
 
   for (const log of pendingLogs) {
-    if (!log.ticketId) continue;
-    const receipt = receipts[log.ticketId];
-    if (!receipt) continue; // Expo hasn't confirmed yet — leave pending
+    const receipt = typeof log.ticketId === 'string' ? receipts[log.ticketId] : undefined;
+    if (!receipt) continue;
 
     if (receipt.status === 'ok') {
-      log.status = 'delivered';
-      log.deliveredAt = now;
-      await log.save();
+      writes.push({
+        updateOne: {
+          filter: { _id: log._id, status: 'pending' },
+          update: { $set: { status: 'delivered', deliveredAt: now } },
+        },
+      });
     } else {
       const error = receipt.details?.error ?? receipt.message ?? 'receipt error';
-      log.status = 'failed';
-      log.error = error;
-      await log.save();
-      failedCount++;
-      failures.push(`${log.dataType ?? log.title}: ${error}`);
-      if (error === 'DeviceNotRegistered') {
-        await clearInvalidToken(log.token);
-      }
+      writes.push({
+        updateOne: {
+          filter: { _id: log._id, status: 'pending' },
+          update: { $set: { status: 'failed', error } },
+        },
+      });
+      onFailure(`${log.dataType ?? log.title}: ${error}`, error);
+      if (error === 'DeviceNotRegistered') invalidTokens.push(log.token);
     }
   }
 
-  if (failedCount > 0 || expiredCount > 0) {
-    const parts: string[] = [];
-    if (failedCount > 0) {
-      parts.push(`Receipts: ${failedCount} push(es) not delivered (${failures.join('; ')})`);
-    }
-    if (expiredCount > 0) {
-      parts.push(
-        `Receipts: ${expiredCount} push(es) abandoned (${RECEIPT_WINDOW_EXPIRED_ERROR})`
-      );
-    }
-    await notifyPushFailure(parts.join(' | '));
-  }
-
-  return expiredCount + pendingLogs.length;
+  if (writes.length > 0) await PushNotificationLog.bulkWrite(writes, { ordered: false });
+  await clearInvalidTokens(invalidTokens);
 }
 
-export const startPushReceiptsJob = () => {
-  cron.schedule('*/15 * * * *', async () => {
-    logger.info('Running push receipts polling job...');
-    try {
-      const processed = await runPushReceiptPolling();
-      logger.info(`Push receipts job: evaluated ${processed} pending entr(ies).`);
-    } catch (err: any) {
-      logger.error(`Error in push receipts job: ${err.message}`);
+/** Polls and updates a bounded number of Expo receipt records at a time. */
+export async function runPushReceiptPolling(
+  now: Date = new Date(),
+  signal?: AbortSignal
+): Promise<number> {
+  const staleCutoff = new Date(now.getTime() - RECEIPT_MIN_AGE_MS);
+  const expiredCutoff = new Date(now.getTime() - RECEIPT_EXPIRY_MS);
+  let expiredCount = 0;
+  let pendingCount = 0;
+  let failedCount = 0;
+  const failureDescriptions: string[] = [];
+
+  const noteFailure = (label: string) => {
+    failedCount++;
+    if (failureDescriptions.length < MAX_FAILURE_DETAILS) failureDescriptions.push(label);
+  };
+
+  const expiredCursor = PushNotificationLog.find({
+    status: 'pending',
+    ticketId: { $exists: true, $type: 'string', $gt: '' },
+    sentAt: { $lte: expiredCutoff },
+  })
+    .select('_id')
+    .cursor({ batchSize: RECEIPT_BATCH_SIZE });
+  let expiredWrites: any[] = [];
+  try {
+    for await (const log of expiredCursor) {
+      throwIfAborted(signal);
+      expiredWrites.push({
+        updateOne: {
+          filter: { _id: log._id, status: 'pending' },
+          update: { $set: { status: 'failed', error: RECEIPT_WINDOW_EXPIRED_ERROR } },
+        },
+      });
+      expiredCount++;
+      if (expiredWrites.length >= RECEIPT_BATCH_SIZE) {
+        await PushNotificationLog.bulkWrite(expiredWrites, { ordered: false });
+        expiredWrites = [];
+      }
     }
-  });
-};
+    if (expiredWrites.length > 0) {
+      await PushNotificationLog.bulkWrite(expiredWrites, { ordered: false });
+    }
+  } finally {
+    await expiredCursor.close().catch(() => {});
+  }
+
+  if (expiredCount > 0) {
+    failedCount += expiredCount;
+    if (failureDescriptions.length < MAX_FAILURE_DETAILS) {
+      failureDescriptions.push(`${expiredCount} push(es) abandoned (${RECEIPT_WINDOW_EXPIRED_ERROR})`);
+    }
+  }
+
+  const pendingCursor = PushNotificationLog.find({
+    status: 'pending',
+    ticketId: { $exists: true, $type: 'string', $gt: '' },
+    sentAt: { $gt: expiredCutoff, $lte: staleCutoff },
+  })
+    .select('_id ticketId token dataType title')
+    .cursor({ batchSize: RECEIPT_BATCH_SIZE });
+  let batch: any[] = [];
+  try {
+    for await (const log of pendingCursor) {
+      throwIfAborted(signal);
+      batch.push(log);
+      pendingCount++;
+      if (batch.length >= RECEIPT_BATCH_SIZE) {
+        await processPendingBatch(batch, now, (label) => noteFailure(label), signal);
+        batch = [];
+      }
+    }
+    if (batch.length > 0) await processPendingBatch(batch, now, (label) => noteFailure(label), signal);
+  } finally {
+    await pendingCursor.close().catch(() => {});
+  }
+
+  if (failedCount > 0) {
+    await notifyPushFailure(`Receipts: ${failedCount} push(es) not delivered (${failureDescriptions.join('; ')})`);
+  }
+
+  return expiredCount + pendingCount;
+}
+
+export const startPushReceiptsJob = () =>
+  scheduleExclusiveJob(
+    'pushReceipts',
+    '*/15 * * * *',
+    async (_scheduledAt, signal) =>
+      `evaluated ${await runPushReceiptPolling(new Date(), signal)} pending entr(ies).`
+  );

@@ -1,8 +1,8 @@
 import mongoose, { Schema, Document } from 'mongoose';
 import { IUser } from './User';
 import { MOBILE_CHANNEL } from '../enums/mobileChannel';
-import { INeckAngleRecord, NeckAngleRecordSchema } from './NeckAngleRecord';
-import { IGoal, GoalSchema } from './Goal';
+import { INeckAngleRecord, EmbeddedNeckAngleRecordSchema } from './NeckAngleRecord';
+import { IGoal, EmbeddedGoalSchema } from './Goal';
 
 export interface IAppUser extends IUser {
   fcmToken: string;
@@ -12,7 +12,9 @@ export interface IAppUser extends IUser {
   hasPaid: boolean;
   isGoalOn: boolean;
   responseRate: number;
+  /** @deprecated B12 — not loaded by default and no longer written. */
   neckAngleRecords: INeckAngleRecord[];
+  neckAngleRecordCounter?: number;
   goals: IGoal[];
   mobileChannel: MOBILE_CHANNEL; // Now uses number enum
   prompt: number;
@@ -43,9 +45,18 @@ const AppUserSchema: Schema = new Schema<IAppUser>({
   currentTargetedAverageNeckAngle: { type: Number, default: 0 }, 
   dateRegistered: { type: Date, default: Date.now }, 
 
-  neckAngleRecords: [NeckAngleRecordSchema],
+  // DEPRECATED (B12): readings live in the NeckAngleRecord collection only.
+  // Batch posts used to also $push every reading here, growing the user
+  // document toward MongoDB's 16 MB limit. Nothing writes to it any more;
+  // scripts/migrate-neck-angle-storage.ts copies anything embedded-only into
+  // the collection and then unsets it. `select: false` keeps it out of every
+  // user load in the meantime.
+  neckAngleRecords: { type: [EmbeddedNeckAngleRecordSchema], select: false },
+  // B12: last counter handed out to this user's readings. Reserved in blocks
+  // with an atomic $inc so concurrent batches never share a counter.
+  neckAngleRecordCounter: { type: Number },
 
-  goals: [GoalSchema],
+  goals: [EmbeddedGoalSchema],
 
   mobileChannel: {
     type: Number, 
@@ -59,6 +70,15 @@ const AppUserSchema: Schema = new Schema<IAppUser>({
   lastCheckInReminderSentAt: { type: Date },
   lastBadPostureAlertSentAt: { type: Date },
 }, { timestamps: true });
+
+// B12: compound indexes support the bounded reminder cursors and the monthly
+// inactivity scan. These indexes include the query's cooldown/range fields so
+// the jobs do not repeatedly collection-scan the full user table.
+AppUserSchema.index({ deleted: 1, lastLoginDateTime: 1 });
+AppUserSchema.index({ deleted: 1, allowPushNotifications: 1, isGoalOn: 1, dateRegistered: 1, lastGoalReminderSentAt: 1, fcmToken: 1 });
+AppUserSchema.index({ deleted: 1, allowPushNotifications: 1, dateRegistered: 1, lastCheckInReminderSentAt: 1, fcmToken: 1 });
+AppUserSchema.index({ deleted: 1, allowPushNotifications: 1, isGoalOn: 1, lastGoalReminderSentAt: 1, fcmToken: 1 });
+AppUserSchema.index({ deleted: 1, allowPushNotifications: 1, lastBadPostureAlertSentAt: 1, fcmToken: 1 });
 
 const AppUser = mongoose.models.AppUser || mongoose.model<IAppUser>('AppUser', AppUserSchema);
 
