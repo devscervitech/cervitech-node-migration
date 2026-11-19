@@ -153,6 +153,7 @@ router.post("/verify-reset-otp", BackOfficeUserController.verifyResetOtp);
  *   post:
  *     tags: [BackOfficeUser]
  *     summary: Reset a back-office user's password using a reset token
+ *     description: Requires a password_reset token scoped to BACKOFFICE_USER; tokens from other account types are rejected.
  *     requestBody:
  *       required: true
  *       content:
@@ -190,6 +191,8 @@ router.post("/reset-password", BackOfficeUserController.resetPassword);
  *     security:
  *       - bearerAuth: []
  *     responses:
+ *       503:
+ *         description: Authentication storage temporarily unavailable
  *       200:
  *         description: Logged out
  *         content:
@@ -224,6 +227,8 @@ router.post("/logout", authenticateJWT, authorizeRole('BACKOFFICE_USER'), BackOf
  *               newPassword:
  *                 type: string
  *     responses:
+ *       503:
+ *         description: Authentication storage temporarily unavailable
  *       200:
  *         description: Password changed
  *         content:
@@ -255,6 +260,8 @@ router.post("/change-password", authenticateJWT, authorizeRole('BACKOFFICE_USER'
  *         schema:
  *           type: integer
  *     responses:
+ *       503:
+ *         description: Authentication storage temporarily unavailable
  *       200:
  *         description: Users retrieved
  *         content:
@@ -285,6 +292,8 @@ router.get("/", authenticateJWT, authorizeRole('BACKOFFICE_USER'), BackOfficeUse
  *         schema:
  *           type: string
  *     responses:
+ *       503:
+ *         description: Authentication storage temporarily unavailable
  *       200:
  *         description: User deleted
  *         content:
@@ -321,6 +330,8 @@ router.delete("/:id", authenticateJWT, authorizeRole('BACKOFFICE_USER'), BackOff
  *           schema:
  *             type: object
  *     responses:
+ *       503:
+ *         description: Authentication storage temporarily unavailable
  *       200:
  *         description: User updated
  *         content:
@@ -357,6 +368,8 @@ router.put("/:id", authenticateJWT, authorizeRole('BACKOFFICE_USER'), BackOffice
  *         schema:
  *           type: string
  *     responses:
+ *       503:
+ *         description: Authentication storage temporarily unavailable
  *       200:
  *         description: User found
  *         content:

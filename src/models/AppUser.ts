@@ -52,7 +52,7 @@ const AppUserSchema: Schema = new Schema<IAppUser>({
     enum: Object.values(MOBILE_CHANNEL).filter(val => typeof val === 'number'), 
     default: MOBILE_CHANNEL.WEB,
   },
-  prompt: { type: Number },
+  prompt: { type: Number, default: 5, min: 1 },
   notificationCount: { type: Number },
   deleted: { type: Boolean, default: false },
   lastGoalReminderSentAt: { type: Date },

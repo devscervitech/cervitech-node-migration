@@ -1,6 +1,5 @@
 // user.controller.ts
 import { Request, Response } from 'express';
-import { AutomatePostNeckAngleRecordsViewModel } from '../viewmodels/AutomatePostNeckAngleRecords';
 import { getApiResponseMessages, ApiResponseStatus } from '../utils/apiResponse';
 import { NeckAngleService } from '../services/appUserServices/neckAngle.service';
 import { logger } from '../utils/logger';
@@ -9,8 +8,12 @@ import { NeckAngleModel } from '../models/NeckAngle';
 import { JobScheduler } from '../services/JobScheduler';
 
 export class NeckAngleController {
-  static async postBatchNeckAngleRecords(req: Request, res: Response): Promise<void> {
-    const model: NeckAngleModel = req.body;
+  static async postBatchNeckAngleRecords(req: AuthenticatedRequest, res: Response): Promise<void> {
+    if (!req.user?.userId || req.user.role !== 'APP_USER') {
+      res.status(req.user ? 403 : 401).json({ error: 'Unauthorized' });
+      return;
+    }
+    const model: NeckAngleModel = { ...req.body, appUserId: req.user.userId };
 
     if (
       !model ||
@@ -63,37 +66,6 @@ export class NeckAngleController {
     }
   }
 
-  static async postRandomTestBatchNeckAngleRecords(req: Request, res: Response): Promise<void> {
-    const model: AutomatePostNeckAngleRecordsViewModel = req.body;
-
-    if (!model || typeof model.appUserId !== 'string' || !Array.isArray(model.testValues)) {
-      res.status(400).json({
-        statusCode: 400,
-        message: 'BadRequest',
-        data: null,
-      });
-      return;
-    }
-
-    try {
-      const data = await NeckAngleService.postRandomBatchNeckAngleRecordForTestAsync(model);
-      res.status(200).json({
-        statusCode: 200,
-        message: 'Successful',
-        data,
-      });
-    } catch (error: unknown) {
-      const err = error instanceof Error ? error : new Error('Custom error');
-      logger.error(err);
-
-      res.status(500).json({
-        statusCode: 500,
-        message: err.message,
-        data: null,
-      });
-    }
-  }
-
   // static async sendPushNotificationMessageForAverageNeckAngle(req: Request, res: Response): Promise<void> {
   //   const responses = getApiResponseMessages();
 
@@ -129,30 +101,6 @@ export class NeckAngleController {
         statusCode: 200,
         message: 'Notification count reset successfully',
         data: true,
-      });
-    } catch (error: unknown) {
-      const err = error instanceof Error ? error : new Error('Custom error');
-      logger.error(err);
-
-      res.status(500).json({
-        statusCode: 500,
-        message: err.message,
-        data: null,
-      });
-    }
-  }
-
-  static async getUsersForTesting(req: Request, res: Response): Promise<void> {
-    try {
-      const { default: AppUser } = await import('../models/AppUser');
-      const users = await AppUser.find({}, { _id: 1, username: 1, email: 1, fcmToken: 1 }).limit(
-        10
-      );
-
-      res.status(200).json({
-        statusCode: 200,
-        message: 'Users retrieved successfully',
-        data: users,
       });
     } catch (error: unknown) {
       const err = error instanceof Error ? error : new Error('Custom error');

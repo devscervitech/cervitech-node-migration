@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from "express";
-import { TokenUtil } from "../utils/token.util";
+import { TokenUtil, InvalidTokenError } from "../utils/token.util";
 import TokenBlacklist from "../models/TokenBlacklist";
 
 export interface AuthenticatedRequest extends Request {
@@ -56,6 +56,9 @@ export const authenticateJWT = async (
 
     next();
   } catch (err: any) {
+    if (!(err instanceof InvalidTokenError)) {
+      return res.status(503).json({ success: false, message: 'Authentication temporarily unavailable' });
+    }
     return res.status(403).json({
       success: false,
       message: "Invalid or expired token.",

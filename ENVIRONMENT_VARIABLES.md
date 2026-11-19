@@ -249,3 +249,11 @@ Google Play payments require `GOOGLE_PLAY_SUBSCRIPTION_IDS`: a comma-separated a
 `LOG_LEVEL` controls Winston verbosity (default `info`). Logs are structured JSON on stdout with recursive credential redaction and exception/rejection handlers. Configure retention, rotation, access controls, and aggregation in the container runtime or log collector; no local log file is maintained.
 
 Remove retained signup payloads, deletion/reset tokens, and user/health records from accessible logs under the incident retention policy. Identify accounts created while plaintext signup logging was deployed using account creation dates and deployment history, without exporting their logged passwords. Require password resets for affected accounts and invalidate affected sessions. Rotate affected signing credentials if signing material was exposed; expired action tokens do not need reissuing. Coordinate account recovery and user notification before production changes. This patch does not rotate account passwords, purge historical logs, or revoke sessions.
+
+### Token security rollout
+
+`APP_USER_JWT_SECRET`, `BACKOFFICE_JWT_SECRET`, and `GENERAL_TOKEN_SECRET` are required at boot; blank values are rejected. Use independent signing secrets. Reset/deletion tokens issued before audience scoping must be reissued.
+
+Before deploying, pause auth writes and migrate `tokenblacklists`: populate `expiresAt` from each JWT's numeric `exp`, reconcile duplicate tokens while retaining the latest expiry, drop the old `createdAt_1` TTL index, and create unique `{ token: 1 }` and TTL `{ expiresAt: 1 }` (`expireAfterSeconds: 0`) indexes. Retain malformed legacy entries for review rather than deleting them. Verify the indexes before resuming traffic. Schema changes alone do not remove the old TTL index. Tokens already removed by that index cannot be recovered; rotating access-token secrets invalidates those sessions and requires users to sign in again.
+
+Authenticated endpoints return 503 when blacklist/user lookup fails; invalid credentials continue to return 403 (revoked tokens return 401).
