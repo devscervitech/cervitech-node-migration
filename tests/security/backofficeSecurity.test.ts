@@ -390,8 +390,23 @@ describe('back-office password and account data security', () => {
     expect(hasAdminGate(backOfficeUserRoutes, 'put', '/:id/access')).toBe(true);
     expect(hasAdminGate(backOfficeUserRoutes, 'delete', '/:id')).toBe(true);
     expect(hasAdminGate(usersRoutes, 'delete', '/:id')).toBe(true);
-    expect(neckAngleRoutes.stack.some((layer: any) => layer.route?.path === '/records/random')).toBe(false);
-    expect(neckAngleRoutes.stack.some((layer: any) => layer.route?.path === '/test-users')).toBe(false);
+
+    const middlewareNames = (method: string, path: string) =>
+      neckAngleRoutes.stack
+        .filter((layer: any) => layer.route?.path === path && layer.route.methods[method])
+        .flatMap((layer: any) => layer.route.stack.map((routeLayer: any) => routeLayer.handle.name));
+
+    expect(middlewareNames('post', '/records/random')).toEqual(
+      expect.arrayContaining([
+        'authenticateJWT',
+        'authorizeRoleMiddleware',
+        'requireAccessLevelMiddleware',
+        'requireWritable',
+      ])
+    );
+    expect(
+      neckAngleRoutes.stack.some((layer: any) => layer.route?.path === '/test-users')
+    ).toBe(false);
   });
 
   it('requires app-user tokens on authenticated app-user routes', () => {
@@ -447,8 +462,9 @@ describe('back-office password and account data security', () => {
 
     expect(postBatch).toHaveBeenCalledWith(
       expect.objectContaining({
-        appUserId: 'authenticated-user',
-        neckAngleRecords: [expect.objectContaining({ appUserId: 'authenticated-user' })],
+        neckAngleRecords: [
+          expect.objectContaining({ appUserId: 'authenticated-user' }),
+        ],
       })
     );
   });

@@ -14,6 +14,9 @@ const ResponseRateSchema = new Schema<IResponseRate>({
   dateCreated: { type: Date, default: Date.now },
 });
 
+// B12: response-rate statistics aggregate by the owning app-user ID.
+ResponseRateSchema.index({ appUserId: 1 });
+
 const ResponseRate =
   mongoose.models.ResponseRate || mongoose.model('ResponseRate', ResponseRateSchema);
 

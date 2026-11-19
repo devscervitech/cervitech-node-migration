@@ -4,6 +4,10 @@ import j2s from 'joi-to-swagger';
 import { signupSchema, loginSchema, logoutSchema } from '../validation/schemas/auth.schema';
 import { transactionSchema } from '../validation/schemas/transaction.schema';
 import {
+  neckAngleBatchSchema,
+  randomNeckAngleBatchSchema,
+} from '../validation/schemas/neckAngle.schema';
+import {
   createBackofficeUserSchema,
   updateBackofficeProfileSchema,
   updateBackofficeAccessSchema,
@@ -43,6 +47,8 @@ const definition: swaggerJSDoc.OAS3Definition = {
       LoginRequest: fromJoi(loginSchema),
       LogoutRequest: fromJoi(logoutSchema),
       TransactionRequest: fromJoi(transactionSchema),
+      NeckAngleBatchRequest: fromJoi(neckAngleBatchSchema),
+      RandomNeckAngleBatchRequest: fromJoi(randomNeckAngleBatchSchema),
       CreateBackofficeUserRequest: fromJoi(createBackofficeUserSchema),
       UpdateBackofficeProfileRequest: fromJoi(updateBackofficeProfileSchema),
       UpdateBackofficeAccessRequest: fromJoi(updateBackofficeAccessSchema),

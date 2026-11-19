@@ -1,7 +1,12 @@
 // routes/neckAngleRoutes.ts
 import express from 'express';
 import { NeckAngleController } from '../controllers/neckAngle.controller';
-import { authenticateJWT, authorizeRole } from '../middlewares/auth.middleware.js';
+import {
+  authenticateJWT,
+  authorizeRole,
+  requireAccessLevel,
+  requireWritable,
+} from '../middlewares/auth.middleware.js';
 
 const router = express.Router();
 
@@ -13,34 +18,64 @@ const router = express.Router();
  * /neck-angle/records/batch:
  *   post:
  *     tags: [NeckAngle]
- *     summary: Submit neck-angle records for the authenticated app user; body appUserId is ignored
+ *     summary: Submit a bounded batch of neck-angle records for the authenticated app user
+ *     description: Any appUserId supplied in the request body is ignored; records are scoped to the authenticated app user.
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
  *           schema:
- *             type: object
- *             required: [neckAngleRecords]
- *             properties:
- *               neckAngleRecords:
- *                 type: array
- *                 items:
- *                   type: object
- *     security:
- *       - bearerAuth: []
+ *             $ref: '#/components/schemas/NeckAngleBatchRequest'
  *     responses:
- *       401:
- *         description: Not authenticated
- *       403:
- *         description: Account role not permitted
  *       200:
  *         description: Records saved
  *       400:
- *         description: neckAngleRecords missing/invalid
+ *         description: Request body invalid or batch exceeds 100 records
+ *       413:
+ *         description: JSON request body exceeds the 100 KB parser limit
+ *       401:
+ *         description: Not authenticated
+ *       403:
+ *         description: Authenticated app-user token required
+ *     security:
+ *       - bearerAuth: []
  */
 router.post('/records/batch', authenticateJWT, authorizeRole('APP_USER'), NeckAngleController.postBatchNeckAngleRecords);
 
 
+/**
+ * @openapi
+ * /neck-angle/records/random:
+ *   post:
+ *     tags: [NeckAngle]
+ *     summary: "[Dev] Submit a batch of randomly generated test neck-angle records"
+ *     description: Administrator only. This endpoint modifies the selected app user's test records.
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/RandomNeckAngleBatchRequest'
+ *     responses:
+ *       200:
+ *         description: Records saved
+ *       400:
+ *         description: Invalid user ID, record count, or date range
+ *       401:
+ *         description: Not authenticated
+ *       403:
+ *         description: Administrator privileges required or account is read-only
+ */
+router.post(
+  '/records/random',
+  authenticateJWT,
+  authorizeRole('BACKOFFICE_USER'),
+  requireAccessLevel('ADMIN'),
+  requireWritable,
+  NeckAngleController.postRandomTestBatchNeckAngleRecords
+);
 
 /**
  * @openapi

@@ -1,104 +1,233 @@
-import cron from 'node-cron';
 import TransactionRecord from '../models/TransactionRecord';
 import AppUser from '../models/AppUser';
 import { GooglePlayService } from '../services/googlePlay.service';
 import { TransactionService } from '../services/transaction.service';
+import { AppUserService } from '../services/appUserServices/appUserService.service';
 import { TRANSACTION_STATUS } from '../enums/transaction';
 import { logger } from '../utils/logger';
+import { scheduleExclusiveJob } from './jobLock';
 
-// #09: keeps hasPaid accurate after the initial purchase.
-//
-// Approach chosen: polling, not RTDN/webhook. A webhook needs a Google Cloud
-// Pub/Sub topic wired up in Play Console -- external config that doesn't
-// exist yet. Polling needs nothing beyond the same Play Developer API access
-// #08 already requires, so it's the only approach that can ship today. If
-// RTDN is set up later, this job can be swapped for a webhook route without
-// changing how entitlement is granted/revoked.
-//
-// Note: this only revokes hasPaid (cancel/expire/refund-by-expiry). It does
-// not detect an immediate refund that predates the subscription's expiry --
-// that requires polling `purchases.voidedpurchases.list` separately, which
-// is out of scope here since it wasn't in the ticket's checklist.
+export const FAILED_RECHECK_WINDOW_DAYS = 100;
+const PENDING_RECHECK_MS = 15 * 60 * 1000;
+const COMPLETED_RECHECK_MS = 24 * 60 * 60 * 1000;
+const FAILED_RECHECK_MS = 60 * 60 * 1000;
+const CURSOR_BATCH_SIZE = 250;
+
+export type SubscriptionSyncSummary = {
+  checkedUsers: number;
+  verified: number;
+  revoked: number;
+  regranted: number;
+};
+
+const playStatusToTransactionStatus = (status: 'entitled' | 'pending' | 'not_entitled') =>
+  status === 'entitled'
+    ? TRANSACTION_STATUS.Completed
+    : status === 'pending'
+      ? TRANSACTION_STATUS.Pending
+      : TRANSACTION_STATUS.Failed;
+
+export const isFailedRecheckSlot = (scheduledAt: Date) => scheduledAt.getUTCMinutes() < 15;
+
+function nextCheckAt(status: number, now: Date): Date {
+  const interval =
+    status === TRANSACTION_STATUS.Completed
+      ? COMPLETED_RECHECK_MS
+      : status === TRANSACTION_STATUS.Pending
+        ? PENDING_RECHECK_MS
+        : FAILED_RECHECK_MS;
+  return new Date(now.getTime() + interval);
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error ? signal.reason : new Error('Subscription sync was aborted.');
+  }
+}
+
+type SyncUserState = {
+  userId: string;
+  anyEntitled: boolean;
+  hasDeferredActiveRecord: boolean;
+  verificationFailed: boolean;
+  checked: boolean;
+};
+
+async function finishUser(
+  state: SyncUserState,
+  summary: SubscriptionSyncSummary,
+  now: Date
+): Promise<void> {
+  if (!state.checked) return;
+  summary.checkedUsers++;
+
+  if (state.anyEntitled) {
+    if (await AppUserService.ensurePaidEntitlement(state.userId)) {
+      summary.regranted++;
+      logger.info(`Restored hasPaid for user ${state.userId} (subscription entitled again).`);
+    }
+    return;
+  }
+
+  // A valid active record not due for polling still protects the entitlement.
+  // Look it up with the per-user index instead of loading every future record
+  // on every 15-minute sync. Transient errors also must never revoke a real sub.
+  if (!state.verificationFailed) {
+    state.hasDeferredActiveRecord = Boolean(await TransactionRecord.exists({
+      appUserId: state.userId,
+      purchaseToken: { $exists: true, $type: 'string', $gt: '' },
+      status: { $in: [TRANSACTION_STATUS.Pending, TRANSACTION_STATUS.Completed] },
+      nextVerificationAt: { $gt: now },
+    }));
+  }
+
+  if (!state.verificationFailed && !state.hasDeferredActiveRecord) {
+    const result = await AppUser.updateOne(
+      { _id: state.userId, hasPaid: true },
+      { $set: { hasPaid: false } }
+    );
+    if (result.modifiedCount > 0) {
+      summary.revoked++;
+      logger.info(`Revoked hasPaid for user ${state.userId} (no remaining entitled subscription).`);
+    }
+  }
+}
+
+/**
+ * Reconciles Play entitlements in a cursor. Pending purchases are checked
+ * every 15 minutes, completed subscriptions daily, and recently failed
+ * purchases hourly for 100 days. A deferred active record prevents another
+ * old/failed record from revoking the user's current entitlement.
+ */
+export async function runSubscriptionSync(
+  now: Date = new Date(),
+  options: { includeRecentlyFailed?: boolean; signal?: AbortSignal } = {}
+): Promise<SubscriptionSyncSummary> {
+  const includeRecentlyFailed = options.includeRecentlyFailed ?? isFailedRecheckSlot(now);
+  const failedCutoff = new Date(now.getTime() - FAILED_RECHECK_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  const dueVerification = {
+    $or: [
+      { nextVerificationAt: { $exists: false } },
+      { nextVerificationAt: { $lte: now } },
+    ],
+  };
+  const statusScope: Record<string, unknown>[] = [
+    {
+      status: { $in: [TRANSACTION_STATUS.Pending, TRANSACTION_STATUS.Completed] },
+      ...dueVerification,
+    },
+  ];
+  if (includeRecentlyFailed) {
+    statusScope.push({
+      status: TRANSACTION_STATUS.Failed,
+      $and: [
+        {
+          $or: [
+            { statusChangedAt: { $gte: failedCutoff } },
+            { statusChangedAt: { $exists: false }, updatedAt: { $gte: failedCutoff } },
+          ],
+        },
+        dueVerification,
+      ],
+    });
+  }
+
+  const cursor = TransactionRecord.find({
+    purchaseToken: { $exists: true, $type: 'string', $gt: '' },
+    $or: statusScope,
+  })
+    .select(
+      '_id appUserId status purchaseToken packageName subscriptionId entitlementGranted updatedAt nextVerificationAt statusChangedAt'
+    )
+    .sort({ appUserId: 1, _id: 1 })
+    .cursor({ batchSize: CURSOR_BATCH_SIZE });
+
+  const summary: SubscriptionSyncSummary = {
+    checkedUsers: 0,
+    verified: 0,
+    revoked: 0,
+    regranted: 0,
+  };
+  let current: SyncUserState | undefined;
+
+  try {
+    for await (const record of cursor) {
+      throwIfAborted(options.signal);
+      const userId = String(record.appUserId);
+      if (current && current.userId !== userId) {
+        await finishUser(current, summary, now);
+        current = undefined;
+      }
+      current ??= {
+        userId,
+        anyEntitled: false,
+        hasDeferredActiveRecord: false,
+        verificationFailed: false,
+        checked: false,
+      };
+
+      const recordStatus = record.status;
+      const isActive =
+        recordStatus === TRANSACTION_STATUS.Pending || recordStatus === TRANSACTION_STATUS.Completed;
+      const due = !record.nextVerificationAt || record.nextVerificationAt <= now;
+
+      if (isActive && !due) {
+        current.hasDeferredActiveRecord = true;
+        continue;
+      }
+
+      if (recordStatus === TRANSACTION_STATUS.Failed && !includeRecentlyFailed) continue;
+
+      current.checked = true;
+      try {
+        const verification = await GooglePlayService.verifySubscriptionPurchase({
+          packageName: record.packageName!,
+          subscriptionId: record.subscriptionId!,
+          purchaseToken: record.purchaseToken!,
+        });
+        summary.verified++;
+
+        const nextStatus = playStatusToTransactionStatus(verification.status);
+        if (verification.status === 'entitled') current.anyEntitled = true;
+
+        if (record.status !== nextStatus) record.statusChangedAt = now;
+        else if (!record.statusChangedAt) record.statusChangedAt = record.updatedAt ?? now;
+        record.status = nextStatus;
+        record.nextVerificationAt = nextCheckAt(nextStatus, now);
+        await record.save();
+
+        if (verification.status === 'entitled' && !record.entitlementGranted) {
+          await TransactionService.grantEntitlement(record);
+        }
+      } catch (error) {
+        current.verificationFailed = true;
+        // Throttle transient failures instead of calling Play on every slot.
+        record.nextVerificationAt = new Date(now.getTime() + PENDING_RECHECK_MS);
+        await record.save().catch(() => {});
+        logger.error(`Failed to re-verify a subscription record for user ${userId}`, {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    if (current) await finishUser(current, summary, now);
+  } finally {
+    await cursor.close().catch(() => {});
+  }
+
+  return summary;
+}
+
 export const startSubscriptionSyncJob = () => {
-  const schedule = '*/15 * * * *'; // Reconcile pending and completed purchases every 15 minutes
-
-  cron.schedule(schedule, async () => {
-    if (!GooglePlayService.isConfigured()) {
-      logger.warn('Subscription sync job skipped: Play verification is not configured.');
-      return;
-    }
-
-    logger.info('Running subscription sync job...');
-
-    try {
-      const records = await TransactionRecord.find({
-        purchaseToken: { $exists: true, $ne: null },
+  scheduleExclusiveJob(
+    'subscriptionSync',
+    '*/15 * * * *',
+    async (scheduledAt, signal) => {
+      if (!GooglePlayService.isConfigured()) return 'skipped: Play verification is not configured.';
+      const summary = await runSubscriptionSync(new Date(), {
+        includeRecentlyFailed: isFailedRecheckSlot(scheduledAt),
+        signal,
       });
-
-      // Grouped per user because a user can now have more than one
-      // transaction record over their lifetime (resubscriptions, plan
-      // changes, restores — see transaction.service.ts). Revoking on the
-      // first not-entitled record seen would incorrectly strip hasPaid from
-      // someone with a valid CURRENT subscription just because an old,
-      // already-superseded record of theirs has since expired.
-      const recordsByUser = new Map<string, typeof records>();
-      for (const record of records) {
-        const bucket = recordsByUser.get(record.appUserId) ?? [];
-        bucket.push(record);
-        recordsByUser.set(record.appUserId, bucket);
-      }
-
-      let revoked = 0;
-      for (const [appUserId, userRecords] of recordsByUser) {
-        let anyEntitled = false;
-        let verificationFailed = false;
-
-        for (const record of userRecords) {
-          try {
-            const verification = await GooglePlayService.verifySubscriptionPurchase({
-              packageName: record.packageName!,
-              subscriptionId: record.subscriptionId!,
-              purchaseToken: record.purchaseToken!,
-            });
-            record.status = verification.status === 'entitled' ? TRANSACTION_STATUS.Completed
-              : verification.status === 'pending' ? TRANSACTION_STATUS.Pending : TRANSACTION_STATUS.Failed;
-            await record.save();
-            if (verification.status === 'entitled') {
-              anyEntitled = true;
-              if (!record.entitlementGranted) {
-                await TransactionService.transactionRecords(appUserId, {
-                  amount: record.amount, transDate: record.transDate,
-                  purchaseToken: record.purchaseToken, packageName: record.packageName,
-                  subscriptionId: record.subscriptionId,
-                });
-              }
-            }
-          } catch (error) {
-            // Can't confirm this record's state — don't let a transient
-            // Play API failure count as "not entitled" and risk revoking a
-            // real subscriber. See the outer catch: this just means this
-            // user is skipped for this run, not incorrectly revoked.
-            verificationFailed = true;
-            logger.error(`Failed to re-verify a subscription record for user ${appUserId}`, {
-              error: error instanceof Error ? error.message : String(error),
-            });
-          }
-        }
-
-        if (!anyEntitled && !verificationFailed) {
-          await AppUser.updateOne({ _id: appUserId }, { $set: { hasPaid: false } });
-          revoked += 1;
-          logger.info(`Revoked hasPaid for user ${appUserId} (no remaining entitled subscription).`);
-        }
-      }
-
-      logger.info(
-        `Subscription sync job completed. ${revoked} user(s) revoked out of ${recordsByUser.size} checked.`
-      );
-    } catch (error) {
-      logger.error('Subscription sync job failed', {
-        error: error instanceof Error ? error.message : String(error),
-      });
+      return `${summary.checkedUsers} user(s) checked, ${summary.verified} record(s) verified, ${summary.revoked} revoked, ${summary.regranted} re-granted.`;
     }
-  });
+  );
 };

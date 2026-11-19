@@ -15,6 +15,7 @@
     "test:watch": "vitest",
     "test:file": "vitest run",
     "audit:backoffice-passwords": "tsx scripts/audit-backoffice-passwords.ts",
+    "migrate:neck-angle-storage": "tsx scripts/migrate-neck-angle-storage.ts",
     "migrate:backoffice-access-levels": "tsx scripts/migrate-backoffice-access-levels.ts",
     "bootstrap:backoffice-admin": "tsx scripts/bootstrap-backoffice-admin.ts"
   },

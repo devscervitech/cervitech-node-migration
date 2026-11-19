@@ -3,8 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const axiosPost = vi.fn();
 const userFind = vi.fn();
 const updateMany = vi.fn();
-const logSave = vi.fn();
-const pushLogCtor = vi.fn();
+const logInsertMany = vi.fn();
 const notifyFailure = vi.fn();
 
 vi.mock('axios', () => ({
@@ -23,20 +22,20 @@ vi.mock('../../src/models/AppUser', () => ({
 }));
 
 vi.mock('../../src/models/PushNotificationLog', () => ({
-  PushNotificationLog: vi.fn(function (this: any, fields: unknown) {
-    Object.assign(this, fields as object);
-    this.save = logSave;
-  }),
+  PushNotificationLog: { insertMany: (...args: unknown[]) => logInsertMany(...args) },
 }));
 
 import { PushNotificationDriver } from '../../src/services/pushNotificationDriver';
-import { PushNotificationLog } from '../../src/models/PushNotificationLog';
+
+/** Every audit entry written, across all insertMany calls. */
+const loggedEntries = (): Record<string, unknown>[] =>
+  logInsertMany.mock.calls.flatMap((call) => call[0] as Record<string, unknown>[]);
 
 beforeEach(() => {
   vi.clearAllMocks();
   axiosPost.mockReset();
   userFind.mockResolvedValue([]);
-  logSave.mockResolvedValue(undefined);
+  logInsertMany.mockResolvedValue([]);
 });
 
 const validToken = 'ExponentPushToken[abc]';
@@ -87,15 +86,16 @@ describe('PushNotificationDriver.sendBatch', () => {
     expect(axiosPost.mock.calls[0][1]).toEqual([
       expect.objectContaining({ to: validToken, title: 'T', body: 'B', priority: 'high' }),
     ]);
-    expect(PushNotificationLog).toHaveBeenCalledWith({
-      token: validToken,
-      title: 'T',
-      dataType: 'test_event',
-      ticketId: 'ticket-1',
-      status: 'pending',
-      error: undefined,
-    });
-    expect(logSave).toHaveBeenCalled();
+    expect(loggedEntries()).toEqual([
+      {
+        token: validToken,
+        title: 'T',
+        dataType: 'test_event',
+        ticketId: 'ticket-1',
+        status: 'pending',
+        error: undefined,
+      },
+    ]);
   });
 
   it('skips non-Expo tokens without posting or logging', async () => {
@@ -104,7 +104,7 @@ describe('PushNotificationDriver.sendBatch', () => {
     expect(result.delivered).toEqual([false]);
     expect(result.ticketIds).toEqual([null]);
     expect(axiosPost).not.toHaveBeenCalled();
-    expect(PushNotificationLog).not.toHaveBeenCalled();
+    expect(logInsertMany).not.toHaveBeenCalled();
   });
 
   it('skips opted-out users without posting or logging, but counts them as delivered', async () => {
@@ -115,7 +115,7 @@ describe('PushNotificationDriver.sendBatch', () => {
 
     expect(result.delivered).toEqual([true]);
     expect(axiosPost).not.toHaveBeenCalled();
-    expect(PushNotificationLog).not.toHaveBeenCalled();
+    expect(logInsertMany).not.toHaveBeenCalled();
   });
 
   it('clears DeviceNotRegistered tokens and logs the failure', async () => {
@@ -135,11 +135,13 @@ describe('PushNotificationDriver.sendBatch', () => {
 
     expect(result.delivered).toEqual([false]);
     expect(result.ticketIds).toEqual([null]);
-    expect(updateMany).toHaveBeenCalledWith({ fcmToken: validToken }, { $unset: { fcmToken: '' } });
-    expect(PushNotificationLog).toHaveBeenCalledWith(
+    expect(updateMany).toHaveBeenCalledWith(
+      { fcmToken: { $in: [validToken] } },
+      { $unset: { fcmToken: '' } }
+    );
+    expect(loggedEntries()).toContainEqual(
       expect.objectContaining({ status: 'failed', error: 'DeviceNotRegistered' })
     );
-    expect(logSave).toHaveBeenCalled();
   });
 
   it('chunks large batches at 100 messages per request', async () => {
@@ -166,11 +168,10 @@ describe('PushNotificationDriver.sendBatch', () => {
 
     expect(result.delivered).toEqual([false, false]);
     expect(result.ticketIds).toEqual([null, null]);
-    expect(PushNotificationLog).toHaveBeenCalledTimes(2);
-    expect(PushNotificationLog).toHaveBeenCalledWith(
+    expect(loggedEntries()).toHaveLength(2);
+    expect(loggedEntries()).toContainEqual(
       expect.objectContaining({ token: validToken, status: 'failed', error: 'network down' })
     );
-    expect(logSave).toHaveBeenCalledTimes(2);
   });
 
   it('keeps the other chunks\u2019 tickets when one chunk fails, and logs the failed chunk\u2019s messages', async () => {
@@ -187,11 +188,9 @@ describe('PushNotificationDriver.sendBatch', () => {
 
     expect(result.delivered.filter(Boolean)).toHaveLength(100);
     expect(result.ticketIds.filter(Boolean)).toHaveLength(100);
-    expect(PushNotificationLog).toHaveBeenCalledTimes(101);
-    expect(PushNotificationLog).toHaveBeenCalledWith(
-      expect.objectContaining({ status: 'pending' })
-    );
-    expect(PushNotificationLog).toHaveBeenCalledWith(
+    expect(loggedEntries()).toHaveLength(101);
+    expect(loggedEntries()).toContainEqual(expect.objectContaining({ status: 'pending' }));
+    expect(loggedEntries()).toContainEqual(
       expect.objectContaining({ status: 'failed', error: 'rate limited' })
     );
     expect(notifyFailure).toHaveBeenCalledTimes(1);
@@ -206,7 +205,7 @@ describe('PushNotificationDriver.sendBatch', () => {
     expect(axiosPost).toHaveBeenCalledTimes(2);
     expect(notifyFailure).toHaveBeenCalledTimes(1);
     expect(notifyFailure).toHaveBeenCalledWith(expect.stringContaining('150'));
-    expect(logSave).toHaveBeenCalledTimes(150);
+    expect(loggedEntries()).toHaveLength(150);
   });
 
   it('does not raise an alert when every chunk is accepted', async () => {
@@ -220,5 +219,47 @@ describe('PushNotificationDriver.sendBatch', () => {
     await PushNotificationDriver.sendBatch(many);
 
     expect(notifyFailure).not.toHaveBeenCalled();
+  });
+
+  // B12: audit writes are batched per Expo request instead of one per ticket.
+  it('writes the audit log once per chunk, not once per ticket', async () => {
+    axiosPost
+      .mockResolvedValueOnce({
+        data: { data: Array.from({ length: 100 }, (_, i) => ({ status: 'ok', id: `t${i}` })) },
+      })
+      .mockResolvedValueOnce({
+        data: { data: Array.from({ length: 50 }, (_, i) => ({ status: 'ok', id: `u${i}` })) },
+      });
+    const many = Array.from({ length: 150 }, (_, i) => pushTo(`ExponentPushToken[t${i}]`));
+
+    await PushNotificationDriver.sendBatch(many);
+
+    expect(logInsertMany).toHaveBeenCalledTimes(2);
+    expect(logInsertMany.mock.calls[0][0]).toHaveLength(100);
+    expect(logInsertMany.mock.calls[1][0]).toHaveLength(50);
+    expect(logInsertMany.mock.calls[0][1]).toEqual({ ordered: false });
+  });
+
+  it('keeps delivery results when the audit write itself fails', async () => {
+    axiosPost.mockResolvedValue({ data: { data: [{ status: 'ok', id: 'ticket-1' }] } });
+    logInsertMany.mockRejectedValue(new Error('db down'));
+
+    const result = await PushNotificationDriver.sendBatch([pushTo(validToken)]);
+
+    expect(result.delivered).toEqual([true]);
+    expect(result.ticketIds).toEqual(['ticket-1']);
+    expect(notifyFailure).not.toHaveBeenCalled();
+  });
+
+  it('clears every unregistered token in a chunk with one update', async () => {
+    const a = 'ExponentPushToken[a]';
+    const b = 'ExponentPushToken[b]';
+    const gone = { status: 'error', details: { error: 'DeviceNotRegistered' } };
+    axiosPost.mockResolvedValue({ data: { data: [gone, gone, gone] } });
+
+    await PushNotificationDriver.sendBatch([pushTo(a), pushTo(b), pushTo(a)]);
+
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    expect(updateMany).toHaveBeenCalledWith({ fcmToken: { $in: [a, b] } }, { $unset: { fcmToken: '' } });
   });
 });

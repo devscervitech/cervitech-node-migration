@@ -24,56 +24,203 @@ import { NeckAngleParametersViewModel } from '../../viewmodels/NeckAngleParamete
 import { DailyAngleDataViewModel } from '../../viewmodels/DailyAngleData.viewmodel';
 import { GoalCycleReportViewModel } from '../../viewmodels/GoalCycleReport.viewmodel';
 import { WeeklyChartDataViewModel } from '../../viewmodels/WeeklyChartData.viewmodel';
+import {
+  monthlyTotalsPipeline,
+  serverTimeZone,
+  starRatingPipeline,
+} from './neckAngleAggregations';
+import {
+  MAX_NECK_ANGLE_BATCH_SIZE,
+  MAX_RANDOM_NECK_ANGLE_RECORDS,
+} from '../../validation/schemas/neckAngle.schema';
 
 export class NeckAngleService {
   static async postBatchNeckAngleRecordAsync(neckAngleModel: NeckAngleModel): Promise<boolean> {
-    try {
-      for (const record of neckAngleModel.neckAngleRecords) {
-        const appUser = await AppUser.findById(record.appUserId);
-        if (!appUser) {
-          logger.warn(`AppUser ${record.appUserId} not found, skipping.`);
-          continue;
-        }
+    const records = neckAngleModel?.neckAngleRecords;
+    if (
+      !Array.isArray(records) ||
+      records.length === 0 ||
+      records.length > MAX_NECK_ANGLE_BATCH_SIZE
+    ) {
+      throw new CustomException('Invalid neck-angle batch size');
+    }
 
-        const lastRecord = await NeckAngleRecordModel.findOne({ appUserId: record.appUserId }).sort({
-          counter: -1,
-        });
-
-        const counter = (lastRecord?.counter ?? 0) + 1;
-        const craniumVertebralAngle = getCraniumVertebralAngleFromNeckAngle(record.angle);
-
-        const neckAngleRecord = new NeckAngleRecordModel({
-          appUserId: record.appUserId,
-          craniumVertebralAngle,
-          counter,
-          dateTimeRecorded: new Date(record.dateTimeRecorded),
-          angle: record.angle,
-        });
-
-        await neckAngleRecord.save();
-
-        await AppUser.updateOne(
-          { _id: record.appUserId },
-          { $push: { neckAngleRecords: neckAngleRecord } }
-        );
-
-        const prompt = Number.isInteger(appUser.prompt) && appUser.prompt > 0
-          ? appUser.prompt : NeckAngleService.defaultPrompt;
-        if (prompt > 0 && counter % prompt === 0) {
-          const averageNeckAngle = await this.calculateAverageOfLastSetNeckAngles(record.appUserId);
-          const notificationPayload: SendAverageNeckAnglePushNotificationViewModel = {
-            userId: record.appUserId,
-            averageNeckAngle,
-          };
-          await this.sendPushNotificationMessageForAverageNeckAngle(notificationPayload);
-        }
+    const normalizedRecords = records.map((record) => {
+      const dateTimeRecorded = record?.dateTimeRecorded
+        ? new Date(record.dateTimeRecorded)
+        : new Date(Number.NaN);
+      if (!record || !Number.isFinite(record.angle) || !Number.isFinite(dateTimeRecorded.getTime())) {
+        throw new CustomException('Invalid neck-angle record');
       }
+      return { ...record, dateTimeRecorded };
+    });
 
+    // B12: grouped per user so each user costs a fixed number of queries
+    // (reserve counters, insertMany, and — only when a prompt threshold is
+    // crossed — one read of the previous readings) instead of four per record.
+    const recordsByUser = new Map<string, typeof normalizedRecords>();
+    for (const record of normalizedRecords) {
+      const bucket = recordsByUser.get(record.appUserId) ?? [];
+      bucket.push(record);
+      recordsByUser.set(record.appUserId, bucket);
+    }
+
+    try {
+      for (const [appUserId, userRecords] of recordsByUser) {
+        await this.insertBatchForUser(appUserId, userRecords);
+      }
       return true;
     } catch (error: any) {
       logger.error(error.message || 'Unhandled exception');
       throw error;
     }
+  }
+
+  private static async insertBatchForUser(
+    appUserId: string,
+    records: { angle: number; dateTimeRecorded: Date }[]
+  ): Promise<void> {
+    const reserved = await this.reserveCounters(appUserId, records.length);
+    if (!reserved) {
+      logger.warn(`AppUser ${appUserId} not found, skipping.`);
+      return;
+    }
+
+    const docs = records.map((record, i) => ({
+      appUserId,
+      angle: record.angle,
+      craniumVertebralAngle: getCraniumVertebralAngleFromNeckAngle(record.angle),
+      dateTimeRecorded: record.dateTimeRecorded,
+      counter: reserved.firstCounter + i,
+    }));
+
+    const { prompt } = reserved;
+    const crossings = docs
+      .map((doc, i) => (prompt > 0 && doc.counter % prompt === 0 ? i : -1))
+      .filter((i) => i >= 0);
+
+    // Read the readings that precede this batch before inserting it, so each
+    // threshold's average covers exactly the last N readings up to that
+    // record — the same window the per-record loop used to compute.
+    const windowSize = NeckAngleService.numberOfRecordPostBeforeSendingAverageNeckAngle;
+    const priorAngles =
+      crossings.length > 0 ? await this.latestAngles(appUserId, windowSize) : [];
+
+    await NeckAngleRecordModel.insertMany(docs, { ordered: true });
+
+    if (crossings.length === 0) return;
+
+    const angles = [...priorAngles, ...docs.map((d) => d.angle)];
+    const averages = crossings.map((i) => {
+      const end = priorAngles.length + i + 1;
+      return this.averageOfLastSet(angles.slice(Math.max(0, end - windowSize), end));
+    });
+
+    for (const averageNeckAngle of averages) {
+      const notificationPayload: SendAverageNeckAnglePushNotificationViewModel = {
+        userId: appUserId,
+        averageNeckAngle,
+      };
+      await this.sendPushNotificationMessageForAverageNeckAngle(notificationPayload);
+    }
+  }
+
+  /**
+   * Atomically reserves `count` consecutive counters for a user and returns
+   * the first one plus the user's prompt. Two concurrent batches each get a
+   * disjoint block, so the prompt-threshold check can't double-fire or skip.
+   * Returns null when the user does not exist (nothing is written then).
+   */
+  private static async reserveCounters(
+    appUserId: string,
+    count: number
+  ): Promise<{ firstCounter: number; prompt: number } | null> {
+    // Increment only after the counter has been initialized. Two first-time
+    // writers may compute the same historical maximum, but the conditional
+    // seed below lets exactly one initialize it; both then reserve disjoint
+    // blocks through MongoDB's atomic $inc.
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const before = await AppUser.findOneAndUpdate(
+        { _id: appUserId, neckAngleRecordCounter: { $type: 'number' } },
+        { $inc: { neckAngleRecordCounter: count } },
+        { returnDocument: 'before', projection: { prompt: 1, neckAngleRecordCounter: 1 } }
+      ).lean<{ prompt?: number; neckAngleRecordCounter?: number } | null>();
+
+      if (before && typeof before.neckAngleRecordCounter === 'number') {
+        return {
+          firstCounter: before.neckAngleRecordCounter + 1,
+          prompt:
+            Number.isInteger(before.prompt) && before.prompt! > 0
+              ? before.prompt!
+              : NeckAngleService.defaultPrompt,
+        };
+      }
+
+      if (!(await AppUser.exists({ _id: appUserId }))) return null;
+
+      const [latest, embedded] = await Promise.all([
+        NeckAngleRecordModel.findOne({ appUserId })
+          .sort({ counter: -1 })
+          .select('counter')
+          .lean<{ counter?: number } | null>(),
+        AppUser.aggregate<{ maxCounter?: number }>([
+          { $match: { _id: Types.ObjectId.isValid(appUserId) ? new Types.ObjectId(appUserId) : appUserId } },
+          {
+            $project: {
+              maxCounter: {
+                $max: {
+                  $map: {
+                    input: { $ifNull: ['$neckAngleRecords', []] },
+                    as: 'record',
+                    in: { $ifNull: ['$$record.counter', 0] },
+                  },
+                },
+              },
+            },
+          },
+        ]).then((rows) => rows[0] ?? null),
+      ]);
+
+      const base = Math.max(latest?.counter ?? 0, embedded?.maxCounter ?? 0, 0);
+      const seeded = await AppUser.findOneAndUpdate(
+        { _id: appUserId, neckAngleRecordCounter: { $not: { $type: 'number' } } },
+        { $set: { neckAngleRecordCounter: base } },
+        { returnDocument: 'after', projection: { neckAngleRecordCounter: 1 } }
+      ).lean<{ neckAngleRecordCounter?: number } | null>();
+      if (!seeded) continue;
+    }
+
+    throw new Error(`Could not initialize the neck-angle counter for user ${appUserId}.`);
+  }
+
+  /** Up to `limit` latest counter-ordered angles for a user, oldest first. */
+  private static async latestAngles(appUserId: string, limit: number): Promise<number[]> {
+    const latest = await NeckAngleRecordModel.find({ appUserId })
+      .sort({ counter: -1 })
+      .limit(limit)
+      .select('angle')
+      .lean<{ angle: number }[]>();
+    return latest.map((r) => r.angle).reverse();
+  }
+
+  /** Last configured number of samples, without changing the response-rate metric. */
+  static async calculateAverageOfLastSetNeckAngles(userId: string): Promise<number> {
+    const angles = await this.latestAngles(
+      userId,
+      NeckAngleService.numberOfRecordPostBeforeSendingAverageNeckAngle
+    );
+    if (angles.length === 0) throw new Error('No records found for this user');
+    return this.averageOfLastSet(angles);
+  }
+
+  /**
+   * Average reported in the prompt push. Preserve B4's behavior of dividing
+   * by the available samples when a user has fewer than the configured window.
+   */
+  private static averageOfLastSet(angles: number[]): number {
+    const sum = angles.reduce((total, angle) => total + angle, 0);
+    const average = angles.length === 0 ? 0 : Math.round((sum / angles.length) * 10) / 10;
+    return Number.isNaN(average) ? 0 : average;
   }
 
   static readonly numberOfRecordPostBeforeSendingAverageNeckAngle: number = (() => {
@@ -190,6 +337,21 @@ export class NeckAngleService {
     }
   }
 
+  /** Same output as getEachMonthOfTheYearAverageNeckAngle, from per-month totals. */
+  static monthlyAveragesFromTotals(
+    totals: { _id: number; total: number; count: number }[]
+  ): { month: string; averageNeckAngle: number }[] {
+    const monthsMap = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    const byMonth = new Map(totals.map((t) => [t._id, t]));
+    return monthsMap.map((month, i) => {
+      const t = byMonth.get(i + 1); // $month is 1-12
+      return { month, averageNeckAngle: t && t.count > 0 ? t.total / t.count : 0 };
+    });
+  }
+
   static getEachDayOfTheWeekAverageNeckAngle(
     aWeekAngleRecords: AbbreviatedNeckAngleRecordViewModel[]
   ): DailyAngleDataViewModel[] {
@@ -221,26 +383,6 @@ export class NeckAngleService {
       logger.error('Error in getEachDayOfTheWeekAverageNeckAngle:', error.message);
       throw new CustomException('Error calculating daily averages.');
     }
-  }
-
-  static async calculateAverageOfLastSetNeckAngles(userId: string): Promise<number> {
-    const records = await NeckAngleRecordModel.find({ appUserId: userId })
-      .sort({ _id: -1 })
-      .limit(NeckAngleService.numberOfRecordPostBeforeSendingAverageNeckAngle);
-
-    if (!records || records.length === 0) {
-      throw new Error('No records found for this user');
-    }
-
-    const sumOfAngles = records.reduce((sum, record) => sum + record.angle, 0);
-    let averageAngle =
-      Math.round(
-        (sumOfAngles / records.length) * 10
-      ) / 10;
-
-    if (isNaN(averageAngle)) averageAngle = 0;
-
-    return averageAngle;
   }
 
   static async sendPushNotificationMessageForAverageNeckAngle(
@@ -281,8 +423,20 @@ export class NeckAngleService {
   static async postRandomBatchNeckAngleRecordForTestAsync(
     model: AutomatePostNeckAngleRecordsViewModel
   ): Promise<boolean> {
-    if (model.numberOfRecords > 30) {
-      throw new CustomException('The maximum number of records allowed is 30 per request');
+    const start = model?.startDate ? new Date(model.startDate) : new Date(Number.NaN);
+    const end = model?.endDate ? new Date(model.endDate) : new Date(Number.NaN);
+    if (
+      !model ||
+      typeof model.appUserId !== 'string' ||
+      model.appUserId.trim().length === 0 ||
+      !Number.isInteger(model.numberOfRecords) ||
+      model.numberOfRecords < 1 ||
+      model.numberOfRecords > MAX_RANDOM_NECK_ANGLE_RECORDS ||
+      !Number.isFinite(start.getTime()) ||
+      !Number.isFinite(end.getTime()) ||
+      end.getTime() <= start.getTime()
+    ) {
+      throw new CustomException('Invalid random neck-angle batch request');
     }
 
     const neckAngleRecords: INeckAngleRecord[] = [];
@@ -290,8 +444,6 @@ export class NeckAngleService {
 
     for (let i = 0; i < model.numberOfRecords; i++) {
       const angle = random();
-      const start = new Date(model.startDate);
-      const end = new Date(model.endDate);
       const timeSpanMinutes = (end.getTime() - start.getTime()) / (1000 * 60);
       const randomMinutes = Math.floor(Math.random() * timeSpanMinutes);
       const randomDate = new Date(start.getTime() + randomMinutes * 60 * 1000);
@@ -420,9 +572,6 @@ export class NeckAngleService {
 
   static async computeNeckAngleParameters(userId: string): Promise<NeckAngleParametersViewModel> {
     try {
-      const userDetails = await AppUser.findById(userId).exec();
-      if (!userDetails) throw new CustomException('User not found');
-
       const today = new Date();
       const startOfDay = DateLibrary.startOfDay(today);
       const endOfDay = DateLibrary.endOfDay(today);
@@ -430,8 +579,57 @@ export class NeckAngleService {
       const endOfWeek = DateLibrary.endOfWeek(today);
       const currentMonth = today.getMonth();
       const currentYear = today.getFullYear();
+      const startOfMonth = new Date(currentYear, currentMonth, 1);
+      const startOfNextMonth = new Date(currentYear, currentMonth + 1, 1);
+      const startOfYear = new Date(currentYear, 0, 1);
+      const startOfNextYear = new Date(currentYear + 1, 0, 1);
 
-      const recordsRaw = await NeckAngleRecordModel.find({ appUserId: userId }).exec();
+      // B12: this used to load every reading the user ever posted. Raw
+      // readings are now fetched only for the window the response actually
+      // lists (day ⊂ week, plus the month — the week can straddle a month or
+      // year boundary, hence min/max). The year view and the lifetime star
+      // rating are aggregated inside MongoDB, so only a dozen small documents
+      // come back regardless of history size.
+      const recentFrom = new Date(
+        Math.min(startOfDay.getTime(), startOfWeek.getTime(), startOfMonth.getTime())
+      );
+      const recentTo = new Date(
+        Math.max(endOfDay.getTime(), endOfWeek.getTime(), startOfNextMonth.getTime() - 1)
+      );
+      const appUserId = String(userId);
+      const responseRateUserId = Types.ObjectId.isValid(userId)
+        ? new Types.ObjectId(userId)
+        : userId;
+
+      const [userDetails, recordsRaw, monthTotals, ratingTotals, responseRateTotals] = await Promise.all([
+        AppUser.findById(userId).select('username').lean<any>().exec(),
+        NeckAngleRecordModel.find({
+          appUserId,
+          dateTimeRecorded: { $gte: recentFrom, $lte: recentTo },
+        })
+          .sort({ dateTimeRecorded: 1 })
+          .select({ _id: 0, angle: 1, craniumVertebralAngle: 1, dateTimeRecorded: 1 })
+          .lean()
+          .exec(),
+        NeckAngleRecordModel.aggregate<{ _id: number; total: number; count: number }>(
+          monthlyTotalsPipeline(appUserId, startOfYear, startOfNextYear, serverTimeZone())
+        ).exec(),
+        NeckAngleRecordModel.aggregate<{ points: number; count: number }>(
+          starRatingPipeline(appUserId)
+        ).exec(),
+        ResponseRate.aggregate<{ prompts: number; responses: number }>([
+          { $match: { appUserId: responseRateUserId } },
+          {
+            $group: {
+              _id: null,
+              prompts: { $sum: { $ifNull: ['$prompt', 0] } },
+              responses: { $sum: { $ifNull: ['$response', 0] } },
+            },
+          },
+        ]).exec(),
+      ]);
+      if (!userDetails) throw new CustomException('User not found');
+
       const records: AbbreviatedNeckAngleRecordViewModel[] = recordsRaw.map((r: any) => ({
         angle: r.angle,
         craniumVertebralAngle: r.craniumVertebralAngle,
@@ -453,10 +651,6 @@ export class NeckAngleService {
           r.dateTimeRecorded.getMonth() === currentMonth &&
           r.dateTimeRecorded.getFullYear() === currentYear
       );
-      const thisYear = records.filter(
-        (r) => r.dateTimeRecorded.getFullYear() === currentYear
-      );
-
       const currentDayAverageNeckAngle = safeAvg(thisDay);
       const currentWeekAverageNeckAngle = safeAvg(thisWeek);
       const currentMonthAverageNeckAngle = safeAvg(thisMonth);
@@ -475,18 +669,10 @@ export class NeckAngleService {
         if (badDay && bestDay && badDay.day === bestDay.day) badDay = null;
       }
 
-      // scoring
-      let totalPoint = 0;
-      for (const rec of records) {
-        const a = rec.angle ?? 0;
-        if (a >= 10 && a <= 19) totalPoint += 1;
-        else if (a >= 20 && a <= 29) totalPoint += 2;
-        else if (a >= 30 && a <= 39) totalPoint += 3;
-        else if (a >= 40 && a <= 49) totalPoint += 4;
-        else if (a >= 50) totalPoint += 5;
-      }
+      // Lifetime star rating (see neckAngleAggregations.ts for the bands).
+      const rating = ratingTotals[0];
       const averageNeckAngleStarRatingOver5 =
-        records.length === 0 ? 0 : +(totalPoint / records.length).toFixed(2);
+        !rating || rating.count === 0 ? 0 : +(rating.points / rating.count).toFixed(2);
 
       // last goals
       const lastGoals = await Goal.find({ appUserId: userId })
@@ -527,14 +713,14 @@ export class NeckAngleService {
         await this.getEachWeekOfTheMonthAverageNeckAngle(thisMonth);
 
       const averageNeckAngleForEachMonthOfTheCurrentYear =
-        this.getEachMonthOfTheYearAverageNeckAngle(thisYear);
+        this.monthlyAveragesFromTotals(monthTotals);
 
       const currentDayAverageNeckAngleTextReport =
         Utils.currentDayAverageNeckAngleTextReport(currentDayAverageNeckAngle);
 
-      const responseEntries = await ResponseRate.find({ appUserId: userId });
-      const prompts = responseEntries.reduce((sum: number, row: any) => sum + (row.prompt || 0), 0);
-      const responses = responseEntries.reduce((sum: number, row: any) => sum + (row.response || 0), 0);
+      const responseTotals = responseRateTotals[0];
+      const prompts = responseTotals?.prompts ?? 0;
+      const responses = responseTotals?.responses ?? 0;
       return {
         username: userDetails.username,
         averageNeckAngleStarRatingOver5,

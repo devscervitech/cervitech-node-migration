@@ -1,8 +1,8 @@
 import {it,expect,vi} from 'vitest';
 import express from 'express';
-vi.mock('../../src/utils/token.util',()=>({InvalidTokenError:class extends Error {},isUserTokenRole:(role:string)=>['APP_USER','BACKOFFICE_USER'].includes(role),TokenUtil:{verifyUserTokenWithAccount:vi.fn(async(token:string)=>{const role=token==='office'?'BACKOFFICE_USER':'APP_USER';return {payload:{userId:'owner',role},account:{userId:'owner',role,accessLevel:'ADMIN',readOnly:false}};})}}));
+vi.mock('../../src/utils/token.util',()=>({InvalidTokenError:class extends Error {},isUserTokenRole:(role:string)=>['APP_USER','BACKOFFICE_USER'].includes(role),TokenUtil:{verifyUserTokenWithAccount:vi.fn(async(token:string)=>{const role=['office','readonly'].includes(token)?'BACKOFFICE_USER':'APP_USER';return {payload:{userId:'owner',role},account:{userId:'owner',role,accessLevel:'ADMIN',readOnly:token==='readonly'}};})}}));
 vi.mock('../../src/models/TokenBlacklist',()=>({default:{findOne:vi.fn(async()=>null)}}));
-vi.mock('../../src/services/appUserServices/neckAngle.service',()=>({NeckAngleService:{postBatchNeckAngleRecordAsync:vi.fn(async()=>true)}}));
+vi.mock('../../src/services/appUserServices/neckAngle.service',()=>({NeckAngleService:{postBatchNeckAngleRecordAsync:vi.fn(async()=>true),postRandomBatchNeckAngleRecordForTestAsync:vi.fn(async()=>true)}}));
 vi.mock('../../src/services/JobScheduler',()=>({JobScheduler:{}}));
 vi.mock('../../src/controllers/user.controller',()=>({UserController:new Proxy({}, {get:()=>((_req:any,res:any)=>res.json({ok:true}))})}));
 import neckRoutes from '../../src/routes/neckAngle.routes';
@@ -22,14 +22,22 @@ it('denies app-user access to administrative profile reads',async()=>{
  for(const path of ['/users/?email=other','/users/response-rate?id=other','/users/other'])expect((await request(path,'GET',true)).status).toBe(403);
 });
 it('ignores attacker-selected batch owner',async()=>{
- expect((await request('/neck-angle/records/batch','POST',true,{appUserId:'victim',neckAngleRecords:[{angle:10}]})).status).toBe(200);
- expect(NeckAngleService.postBatchNeckAngleRecordAsync).toHaveBeenCalledWith(expect.objectContaining({appUserId:'owner'}));
+ expect((await request('/neck-angle/records/batch','POST',true,{appUserId:'victim',neckAngleRecords:[{angle:10,dateTimeRecorded:'2026-10-01T00:00:00.000Z'}]})).status).toBe(200);
+ expect(NeckAngleService.postBatchNeckAngleRecordAsync).toHaveBeenCalledWith(expect.objectContaining({
+  neckAngleRecords:[expect.objectContaining({appUserId:'owner'})],
+ }));
 });
-it('removes test routes and their OpenAPI paths',async()=>{
+it('keeps the B4 test-users route removed and the B12 random-data route admin-protected',async()=>{
  expect((await request('/neck-angle/test-users')).status).toBe(404);
- expect((await request('/neck-angle/records/random','POST')).status).toBe(404);
+ expect((await request('/neck-angle/records/random','POST')).status).toBe(401);
+ const body={appUserId:'victim',startDate:'2026-10-01T00:00:00.000Z',endDate:'2026-10-02T00:00:00.000Z',numberOfRecords:1};
+ expect((await request('/neck-angle/records/random','POST',true,body)).status).toBe(403);
+ expect((await request('/neck-angle/records/random','POST','readonly',body)).status).toBe(403);
+ expect((await request('/neck-angle/records/random','POST','office',body)).status).toBe(200);
  const paths=(swaggerSpec as any).paths;
- for(const path of ['/neck-angle/test-users','/neck-angle/records/random','/users/fcm-token'])expect(paths[path]).toBeUndefined();
+ expect(paths['/neck-angle/test-users']).toBeUndefined();
+ expect(paths['/neck-angle/records/random'].post.security).toEqual([{bearerAuth:[]}]);
+ expect(paths['/users/fcm-token']).toBeUndefined();
 });
 
 it('allows backoffice profile reads',async()=>{
