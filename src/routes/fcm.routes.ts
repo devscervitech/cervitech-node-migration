@@ -2,7 +2,7 @@
 import { Router } from 'express';
 import { FCMController } from '../controllers/fcmToken.controller';
 import { UserController } from '../controllers/user.controller';
-import { authenticateJWT } from '../middlewares/auth.middleware';
+import { authenticateJWT, authorizeRole } from '../middlewares/auth.middleware';
 import { deprecatedRoute } from '../middlewares/deprecatedRoute';
 
 const router = Router();
@@ -42,8 +42,16 @@ const router = Router();
  *               $ref: '#/components/schemas/ApiErrorResponse'
  *       401:
  *         description: Not authenticated
+ *       403:
+ *         description: Authenticated app-user token required
  */
-router.put('/token', deprecatedRoute('/users/me/fcm-token'), authenticateJWT, UserController.updateFCMToken);
+router.put(
+  '/token',
+  deprecatedRoute('/users/me/fcm-token'),
+  authenticateJWT,
+  authorizeRole('APP_USER'),
+  UserController.updateFCMToken
+);
 
 // Test/dev endpoints (no auth)
 

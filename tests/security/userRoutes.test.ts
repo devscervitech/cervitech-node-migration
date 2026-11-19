@@ -1,6 +1,6 @@
 import {it,expect,vi} from 'vitest';
 import express from 'express';
-vi.mock('../../src/utils/token.util',()=>({TokenUtil:{verifyUserToken:vi.fn(async(token:string)=>({userId:'owner',role:token==='office'?'BACKOFFICE_USER':'APP_USER'}))}}));
+vi.mock('../../src/utils/token.util',()=>({InvalidTokenError:class extends Error {},isUserTokenRole:(role:string)=>['APP_USER','BACKOFFICE_USER'].includes(role),TokenUtil:{verifyUserTokenWithAccount:vi.fn(async(token:string)=>{const role=token==='office'?'BACKOFFICE_USER':'APP_USER';return {payload:{userId:'owner',role},account:{userId:'owner',role,accessLevel:'ADMIN',readOnly:false}};})}}));
 vi.mock('../../src/models/TokenBlacklist',()=>({default:{findOne:vi.fn(async()=>null)}}));
 vi.mock('../../src/services/appUserServices/neckAngle.service',()=>({NeckAngleService:{postBatchNeckAngleRecordAsync:vi.fn(async()=>true)}}));
 vi.mock('../../src/services/JobScheduler',()=>({JobScheduler:{}}));

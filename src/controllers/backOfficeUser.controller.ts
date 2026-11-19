@@ -1,28 +1,70 @@
 import { Request, Response } from 'express';
-import backofficeUserService from '../services/backofficeuser.service';
+import backofficeUserService, {
+  BackofficeAdminMutationBusyError,
+} from '../services/backofficeuser.service';
 import { logger } from '../utils/logger';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
 import { sendSuccess, sendError } from '../utils/apiResponse';
+import type { IBackofficeUser } from '../models/BackOfficeUser';
+import type { backOfficeUserModel } from '../types/backOfficeUserModel.types';
+import { validateBackofficeInput } from '../validation/backOfficeUserValidation';
+import {
+  createBackofficeUserSchema,
+  updateBackofficeProfileSchema,
+  updateBackofficeAccessSchema,
+  backofficeLoginSchema,
+  backofficeChangePasswordSchema,
+  backofficeForgotPasswordSchema,
+  backofficeVerifyResetOtpSchema,
+  backofficeResetPasswordSchema,
+} from '../validation/schemas/backOfficeUser.schema';
+import mongoose from 'mongoose';
+
+function toBackofficeUserView(user: IBackofficeUser) {
+  return {
+    id: String(user._id),
+    firstName: user.firstName,
+    lastName: user.lastName,
+    email: user.email,
+    telephone: user.telephone,
+    username: user.username,
+    accessLevel: user.accessLevel,
+    readOnly: user.readOnly,
+    dateRegistered: user.dateRegistered,
+  };
+}
 
 class BackOfficeUserController {
   static async createUser(req: Request, res: Response) {
-    try {
-      const data = await backofficeUserService.create(req.body);
-      logger.info('BackOffice user created successfully.', { user: req.body.username });
+    const validation = validateBackofficeInput<backOfficeUserModel>(
+      createBackofficeUserSchema,
+      req.body
+    );
+    if (validation.error !== null) return sendError(res, 400, validation.error);
 
-      sendSuccess(res, data, 'User created successfully.', 201);
+    try {
+      const data = await backofficeUserService.create(validation.value);
+      logger.info('BackOffice user created successfully.', { user: validation.value.username });
+
+      sendSuccess(res, toBackofficeUserView(data), 'User created successfully.', 201);
     } catch (err: any) {
       logger.error('Create User Error', { error: err });
-      sendError(res, 500, 'Failed to create user.', err.message);
+      if (err instanceof BackofficeAdminMutationBusyError) {
+        return sendError(res, 409, 'Another back-office account security change is in progress. Retry shortly.');
+      }
+      sendError(res, 500, 'Failed to create user.');
     }
   }
 
   static async loginController(req: Request, res: Response) {
+    const validation = validateBackofficeInput<{ username: string; password: string }>(
+      backofficeLoginSchema,
+      req.body
+    );
+    if (validation.error !== null) return sendError(res, 400, validation.error);
+
     try {
-      const { username, password } = req.body;
-      if (!username || !password) {
-        return sendError(res, 400, 'Username and password are required.');
-      }
+      const { username, password } = validation.value;
 
       const { user, token } = await backofficeUserService.loginService(username, password);
 
@@ -36,7 +78,7 @@ class BackOfficeUserController {
       );
     } catch (err: any) {
       logger.error('Login Error', { error: err });
-      sendError(res, 401, 'Invalid username or password.', err.message);
+      sendError(res, 401, 'Invalid username or password.');
     }
   }
 
@@ -54,72 +96,94 @@ class BackOfficeUserController {
       sendSuccess(res, undefined, 'Logout successful. Token invalidated.', 200);
     } catch (err: any) {
       logger.error('Logout Error', { error: err });
-      sendError(res, 500, 'Failed to logout user.', err.message);
+      sendError(res, 500, 'Failed to logout user.');
     }
   }
 
   static async forgotPassword(req: Request, res: Response) {
-    try {
-      const { email } = req.body;
-      if (!email) {
-        return sendError(res, 400, 'Email is required.');
-      }
+    const validation = validateBackofficeInput<{ email: string }>(
+      backofficeForgotPasswordSchema,
+      req.body
+    );
+    if (validation.error !== null) return sendError(res, 400, validation.error);
 
-      const data = await backofficeUserService.sendPasswordResetToken(email);
-      logger.info('Password reset code sent.', { email });
-      sendSuccess(res, data, 'Password reset code sent.', 200);
+    try {
+      const data = await backofficeUserService.sendPasswordResetToken(validation.value.email);
+      logger.info('Backoffice password reset request processed.');
+      sendSuccess(res, data, data.message, 200);
     } catch (err: any) {
       logger.error('Forgot Password Error', { error: err });
-      sendError(res, 500, 'Failed to send password reset code.', err.message);
+      sendError(res, 500, 'Unable to process password reset request.');
     }
   }
 
   static async verifyResetOtp(req: Request, res: Response) {
+    const validation = validateBackofficeInput<{ email: string; otp: string }>(
+      backofficeVerifyResetOtpSchema,
+      req.body
+    );
+    if (validation.error !== null) return sendError(res, 400, validation.error);
+
     try {
-      const { email, otp } = req.body;
-      if (!email || !otp) {
-        return sendError(res, 400, 'Email and OTP are required.');
-      }
+      const { email, otp } = validation.value;
 
       const data = await backofficeUserService.verifyResetOtp(email, otp);
       logger.info('Reset OTP verified.', { email });
       sendSuccess(res, data, 'OTP verified successfully.', 200);
     } catch (err: any) {
       logger.error('Verify Reset OTP Error', { error: err });
-      sendError(res, 400, err.message);
+      sendError(res, 400, 'Invalid or expired OTP.');
     }
   }
 
   static async changePassword(req: AuthenticatedRequest, res: Response) {
+    const validation = validateBackofficeInput<{ currentPassword: string; newPassword: string }>(
+      backofficeChangePasswordSchema,
+      req.body
+    );
+    if (validation.error !== null) return sendError(res, 400, validation.error);
+
+    const userId = req.user?.userId;
+    if (!userId) return sendError(res, 401, 'Unauthorized. Please log in.');
+
     try {
-      const userId = req.user?.userId;
-      const { newPassword } = req.body;
-      if (!userId || !newPassword) {
-        return sendError(res, 400, 'User ID and new password are required.');
+      const { currentPassword, newPassword } = validation.value;
+      const result = await backofficeUserService.changePassword(
+        userId,
+        currentPassword,
+        newPassword
+      );
+      if (result.status === 'invalid_new_password') {
+        return sendError(res, 400, 'New password cannot be empty.');
+      }
+      if (result.status === 'not_found') return sendError(res, 404, 'User not found.');
+      if (result.status === 'incorrect_current_password') {
+        return sendError(res, 401, 'Current password is incorrect.');
       }
 
-      const data = await backofficeUserService.changePassword(userId, newPassword);
       logger.info('Password changed successfully.', { userId });
-      sendSuccess(res, data, 'Password changed successfully.', 200);
+      sendSuccess(res, undefined, 'Password changed successfully.', 200);
     } catch (err: any) {
       logger.error('Change Password Error', { error: err });
-      sendError(res, 500, 'Failed to change password.', err.message);
+      sendError(res, 500, 'Failed to change password.');
     }
   }
 
   static async resetPassword(req: Request, res: Response) {
-    try {
-      const { token, newPassword } = req.body;
-      if (!token || !newPassword) {
-        return sendError(res, 400, 'Token and new password are required.');
-      }
+    const validation = validateBackofficeInput<{ token: string; newPassword: string }>(
+      backofficeResetPasswordSchema,
+      req.body
+    );
+    if (validation.error !== null) return sendError(res, 400, validation.error);
 
+    try {
+      const { token, newPassword } = validation.value;
       const data = await backofficeUserService.resetPassword(token, newPassword);
-      logger.info('Password reset successful.');
+      logger.info('Backoffice password reset successful.');
       sendSuccess(res, data, 'Password reset successful.', 200);
     } catch (err: any) {
       logger.error('Reset Password Error', { error: err });
-      sendError(res, 500, 'Failed to reset password.', err.message);
+      sendError(res, 400, 'Invalid or expired password reset token.');
     }
   }
 
@@ -136,7 +200,7 @@ class BackOfficeUserController {
         logger.info('Fetched number of backoffice users.', { count: limitNum });
         return sendSuccess(
           res,
-          data,
+          data.map(toBackofficeUserView),
           `Retrieved ${limitNum} back office users successfully.`,
           200
         );
@@ -144,51 +208,116 @@ class BackOfficeUserController {
 
       const data = await backofficeUserService.getAll();
       logger.info('Fetched all backoffice users.');
-      return sendSuccess(res, data, 'Users retrieved successfully.', 200);
+      return sendSuccess(res, data.map(toBackofficeUserView), 'Users retrieved successfully.', 200);
     } catch (err: any) {
       logger.error('Get Users Error', { error: err });
-      return sendError(res, 500, 'Failed to retrieve users.', err.message);
+      return sendError(res, 500, 'Failed to retrieve users.');
     }
   }
 
-  static async deleteUser(req: Request, res: Response) {
+  static async deleteUser(req: AuthenticatedRequest, res: Response) {
     try {
       const { id } = req.params;
-      const data = await backofficeUserService.deleteById(id);
+      const actorId = req.user?.userId;
+      if (!actorId) return sendError(res, 401, 'Unauthorized. Please log in.');
+      if (!mongoose.isValidObjectId(id)) return sendError(res, 400, 'Invalid user ID.');
 
-      if (!data) {
+      const result = await backofficeUserService.deleteById(id, actorId);
+
+      if (result.status === 'not_found') {
         logger.warn('Attempted to delete non-existing user.', { id });
         return sendError(res, 404, 'User not found.');
       }
+      if (result.status === 'self_modification') {
+        return sendError(res, 403, 'You cannot delete your own back-office account.');
+      }
+      if (result.status === 'not_admin') {
+        return sendError(res, 403, 'Administrator privileges are required.');
+      }
+      if (result.status === 'not_writable') {
+        return sendError(res, 403, 'A writable back-office account is required.');
+      }
+      if (result.status === 'last_admin') {
+        return sendError(res, 409, 'Cannot delete the last active back-office administrator.');
+      }
+      if (result.status === 'last_writable') {
+        return sendError(res, 409, 'Cannot delete the last writable back-office account.');
+      }
+      if (result.status === 'admin_mutation_busy') {
+        return sendError(res, 409, 'Another back-office account security change is in progress. Retry shortly.');
+      }
 
       logger.info('User deleted successfully.', { id });
-      sendSuccess(res, data, 'User deleted successfully.', 200);
+      sendSuccess(res, undefined, 'User deleted successfully.', 200);
     } catch (err: any) {
       logger.error('Delete User Error', { error: err });
-      sendError(res, 500, 'Failed to delete user.', err.message);
+      sendError(res, 500, 'Failed to delete user.');
     }
   }
 
   static async updateUser(req: Request, res: Response) {
     try {
-      const id = req.params.id || req.body.id;
-      const updateData = req.params.id ? req.body : { ...req.body, id: undefined };
+      const id = req.params.id;
 
-      if (!id) {
-        return sendError(res, 400, 'User ID is required for update.');
-      }
+      if (!id || !mongoose.isValidObjectId(id)) return sendError(res, 400, 'Valid user ID is required.');
 
-      const data = await backofficeUserService.update(id, updateData);
+      const validation = validateBackofficeInput<
+        Partial<Pick<IBackofficeUser, 'firstName' | 'lastName' | 'email' | 'telephone'>>
+      >(updateBackofficeProfileSchema, req.body);
+      if (validation.error !== null) return sendError(res, 400, validation.error);
+
+      const data = await backofficeUserService.update(id, validation.value);
       if (!data) {
         logger.warn('Update attempted on non-existing user.', { id });
         return sendError(res, 404, 'User not found.');
       }
 
       logger.info('User updated successfully.', { id });
-      sendSuccess(res, data, 'User updated successfully.', 200);
+      sendSuccess(res, toBackofficeUserView(data), 'User updated successfully.', 200);
     } catch (err: any) {
       logger.error('Update User Error', { error: err });
-      sendError(res, 500, 'Failed to update user.', err.message);
+      sendError(res, 500, 'Failed to update user.');
+    }
+  }
+
+  static async updateAccess(req: AuthenticatedRequest, res: Response) {
+    const id = req.params.id;
+    const actorId = req.user?.userId;
+    if (!actorId) return sendError(res, 401, 'Unauthorized. Please log in.');
+    if (!id || !mongoose.isValidObjectId(id)) return sendError(res, 400, 'Valid user ID is required.');
+
+    const validation = validateBackofficeInput<
+      Partial<Pick<IBackofficeUser, 'accessLevel' | 'readOnly'>>
+    >(updateBackofficeAccessSchema, req.body);
+    if (validation.error !== null) return sendError(res, 400, validation.error);
+
+    try {
+      const result = await backofficeUserService.updateAccess(id, actorId, validation.value);
+      if (result.status === 'not_found') return sendError(res, 404, 'User not found.');
+      if (result.status === 'not_admin') {
+        return sendError(res, 403, 'Administrator privileges are required.');
+      }
+      if (result.status === 'self_modification') {
+        return sendError(res, 403, 'You cannot change your own access settings.');
+      }
+      if (result.status === 'not_writable') {
+        return sendError(res, 403, 'A writable back-office account is required.');
+      }
+      if (result.status === 'last_writable') {
+        return sendError(res, 409, 'Cannot disable the last writable back-office account.');
+      }
+      if (result.status === 'last_admin') {
+        return sendError(res, 409, 'Cannot disable or demote the last active administrator.');
+      }
+      if (result.status === 'admin_mutation_busy') {
+        return sendError(res, 409, 'Another back-office account security change is in progress. Retry shortly.');
+      }
+
+      logger.info('BackOffice access metadata updated.', { actorId, targetId: id });
+      return sendSuccess(res, toBackofficeUserView(result.user), 'Access metadata updated.', 200);
+    } catch (err: any) {
+      logger.error('Update BackOffice Access Error', { error: err });
+      return sendError(res, 500, 'Failed to update access metadata.');
     }
   }
 
@@ -203,10 +332,10 @@ class BackOfficeUserController {
       }
 
       logger.info('TestUserById: user retrieved successfully.', { id });
-      sendSuccess(res, user, 'User retrieved successfully.', 200);
+      sendSuccess(res, toBackofficeUserView(user), 'User retrieved successfully.', 200);
     } catch (err: any) {
       logger.error('Test User Error', { error: err });
-      sendError(res, 500, 'Failed to retrieve user.', err.message);
+      sendError(res, 500, 'Failed to retrieve user.');
     }
   }
 }
