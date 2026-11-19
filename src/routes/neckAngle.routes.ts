@@ -48,6 +48,7 @@ router.post('/records/batch', authenticateJWT, authorizeRole('APP_USER'), NeckAn
  *   get:
  *     tags: [NeckAngle]
  *     summary: Get the authenticated user's computed neck-angle statistics
+ *     description: responseRate is the all-time responses-to-prompts percentage; posture angles do not modify it.
  *     security:
  *       - bearerAuth: []
  *     responses:
