@@ -1,8 +1,26 @@
 // src/config/swagger.ts
 import swaggerJSDoc from 'swagger-jsdoc';
 import j2s from 'joi-to-swagger';
-import { signupSchema, loginSchema, logoutSchema } from '../validation/schemas/auth.schema';
+import {
+  signupSchema,
+  loginSchema,
+  logoutSchema,
+  appUserChangePasswordSchema,
+  appUserResetPasswordSchema,
+  appUserResetRequestSchema,
+  appUserVerifyResetOtpSchema,
+} from '../validation/schemas/auth.schema';
 import { transactionSchema } from '../validation/schemas/transaction.schema';
+import {
+  createBackofficeUserSchema,
+  updateBackofficeProfileSchema,
+  updateBackofficeAccessSchema,
+  backofficeLoginSchema,
+  backofficeChangePasswordSchema,
+  backofficeForgotPasswordSchema,
+  backofficeVerifyResetOtpSchema,
+  backofficeResetPasswordSchema,
+} from '../validation/schemas/backOfficeUser.schema';
 
 // Request-body schemas are derived from the same Joi schemas the controllers
 // validate against at runtime, so the docs can't drift from actual behavior.
@@ -32,7 +50,19 @@ const definition: swaggerJSDoc.OAS3Definition = {
       SignupRequest: fromJoi(signupSchema),
       LoginRequest: fromJoi(loginSchema),
       LogoutRequest: fromJoi(logoutSchema),
+      AppUserChangePasswordRequest: fromJoi(appUserChangePasswordSchema),
+      AppUserResetPasswordRequest: fromJoi(appUserResetPasswordSchema),
+      AppUserResetRequest: fromJoi(appUserResetRequestSchema),
+      AppUserVerifyResetOtpRequest: fromJoi(appUserVerifyResetOtpSchema),
       TransactionRequest: fromJoi(transactionSchema),
+      CreateBackofficeUserRequest: fromJoi(createBackofficeUserSchema),
+      UpdateBackofficeProfileRequest: fromJoi(updateBackofficeProfileSchema),
+      UpdateBackofficeAccessRequest: fromJoi(updateBackofficeAccessSchema),
+      BackofficeLoginRequest: fromJoi(backofficeLoginSchema),
+      BackofficeChangePasswordRequest: fromJoi(backofficeChangePasswordSchema),
+      BackofficeForgotPasswordRequest: fromJoi(backofficeForgotPasswordSchema),
+      BackofficeVerifyResetOtpRequest: fromJoi(backofficeVerifyResetOtpSchema),
+      BackofficeResetPasswordRequest: fromJoi(backofficeResetPasswordSchema),
       ApiSuccessResponse: {
         type: 'object',
         properties: {

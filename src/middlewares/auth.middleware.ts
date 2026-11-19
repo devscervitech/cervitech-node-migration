@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from "express";
-import { TokenUtil, InvalidTokenError } from "../utils/token.util";
+import { TokenUtil, isUserTokenRole, InvalidTokenError } from "../utils/token.util";
 import TokenBlacklist from "../models/TokenBlacklist";
+import type { BackofficeAccessLevel } from "../enums/backofficeAccessLevel";
 
 export interface AuthenticatedRequest extends Request {
   user?: {
@@ -8,7 +9,13 @@ export interface AuthenticatedRequest extends Request {
     role: "APP_USER" | "BACKOFFICE_USER";
     username?: string;
     email?: string;
+    /** Current back-office authorization level, loaded from the database. */
     accessLevel?: string;
+    /**
+     * Back-office only. From the current stored value, never the token
+     * claims; true unless the stored value is exactly false (fail closed).
+     */
+    readOnly?: boolean;
   };
 }
 
@@ -37,38 +44,48 @@ export const authenticateJWT = async (
       });
     }
 
-    const payload = await TokenUtil.verifyUserToken(token);
+    // Verifies the token and returns a minimal record of the current account
+    // from the lookup verification already performs (no additional query).
+    const { payload, account } = await TokenUtil.verifyUserTokenWithAccount(token);
 
-    if (!payload.role) {
+    if (!isUserTokenRole(payload.role) || account.role !== payload.role) {
       return res.status(403).json({
         success: false,
         message: "Token missing role information.",
       });
     }
 
+    // Identity comes from the current stored record, not the JWT claims.
     req.user = {
-      userId: payload.userId,
-      role: payload.role,
-      username: payload.username,
-      email: payload.email,
-      accessLevel: payload.accessLevel,
+      userId: account.userId,
+      role: account.role,
+      username: account.username,
+      email: account.email,
     };
 
+    if (account.role === "BACKOFFICE_USER") {
+      req.user.accessLevel = account.accessLevel;
+      req.user.readOnly = account.readOnly;
+    }
+
     next();
-  } catch (err: any) {
+  } catch (err) {
     if (!(err instanceof InvalidTokenError)) {
       return res.status(503).json({ success: false, message: 'Authentication temporarily unavailable' });
     }
     return res.status(403).json({
       success: false,
       message: "Invalid or expired token.",
-      error: err.message,
     });
   }
 };
 
 export const authorizeRole = (role: "APP_USER" | "BACKOFFICE_USER") => {
-  return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  return function authorizeRoleMiddleware(
+    req: AuthenticatedRequest,
+    res: Response,
+    next: NextFunction
+  ) {
     if (!req.user) {
       return res.status(401).json({
         success: false,
@@ -85,4 +102,68 @@ export const authorizeRole = (role: "APP_USER" | "BACKOFFICE_USER") => {
 
     next();
   };
+};
+
+/** Restrict back-office account administration to an explicitly assigned level. */
+export const requireAccessLevel = (...allowedLevels: BackofficeAccessLevel[]) => {
+  return function requireAccessLevelMiddleware(
+    req: AuthenticatedRequest,
+    res: Response,
+    next: NextFunction
+  ) {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized. Please log in.",
+      });
+    }
+
+    if (
+      req.user.role !== "BACKOFFICE_USER" ||
+      !allowedLevels.includes(req.user.accessLevel as BackofficeAccessLevel)
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. Administrator privileges are required.",
+      });
+    }
+
+    next();
+  };
+};
+
+/**
+ * Allows administrative mutations only for a BACKOFFICE_USER whose current
+ * stored readOnly value is exactly false. Missing or unexpected values fail
+ * closed. Use after authenticateJWT and authorizeRole('BACKOFFICE_USER').
+ * Read routes and self-service authentication (logout, change-password) must
+ * not use it. Account administration must also pass requireAccessLevel('ADMIN').
+ */
+export const requireWritable = (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  if (!req.user) {
+    return res.status(401).json({
+      success: false,
+      message: "Unauthorized. Please log in.",
+    });
+  }
+
+  if (req.user.role !== "BACKOFFICE_USER") {
+    return res.status(403).json({
+      success: false,
+      message: "Access denied.",
+    });
+  }
+
+  if (req.user.readOnly !== false) {
+    return res.status(403).json({
+      success: false,
+      message: "This account has read-only access.",
+    });
+  }
+
+  next();
 };
