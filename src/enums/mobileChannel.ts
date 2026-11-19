@@ -1,5 +1,7 @@
 export enum MOBILE_CHANNEL {
-  ANDROID = 'ANDROID',
-  IOS = 'IOS',
-  OTHER = 'OTHER',
+  ANDROID = 1,
+  IOS = 2,
+  WEB = 3
 }
+
+export type MobileChannelType = MOBILE_CHANNEL.ANDROID | MOBILE_CHANNEL.IOS | MOBILE_CHANNEL.WEB;

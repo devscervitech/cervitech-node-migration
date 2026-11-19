@@ -1,5 +1,5 @@
 import { Activity } from "./Activity";
-import { MobileChannel } from "./AppUser";
+import { MOBILE_CHANNEL } from "../enums/mobileChannel";
 import mongoose from "mongoose";
 
 export interface ResponseRateViewModel {
@@ -19,11 +19,9 @@ export interface AppUserResponse {
   firstName?: string;
   lastName?: string;
   pictureUrl?: string;
-  salt: string;
-  hash: string;
   isGoalOn: boolean;
   allowPushNotifications: boolean;
-  mobileChannel: MobileChannel;
+  mobileChannel: MOBILE_CHANNEL;
   dateRegistered?: string;
   responseRate: number;
   lastLoginDateTime?: Date;

@@ -1,2 +1,0 @@
-// viewmodels/SendAverageNeckAnglePushNotificationViewModel.ts
-export {};

@@ -6,7 +6,7 @@ interface NeckAngleTestValue {
 }
 
 export interface AutomatePostNeckAngleRecordsViewModel {
-  appUserId: number;
+  appUserId: string;
   startDate: Date;
   endDate: Date;
   numberOfRecords: number;

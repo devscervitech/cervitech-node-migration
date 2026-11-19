@@ -1,15 +1,18 @@
+// Leave as CommonJS.
+// To start server, either run "yarn build" then "yarn start" or simply run "yarn dev"
+
 {
   "compilerOptions": {
     "target": "ES2020",
-    "module": "ESNext",
+    "module": "commonjs",
     "moduleResolution": "node",
     "esModuleInterop": true,
     "outDir": "./dist",
     "rootDir": "./src",
+    "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "strict": true,
-    "skipLibCheck": true,
+    "skipLibCheck": true
   },
-  "include": ["src"],
-  "exclude": ["node_modules"]
+  "include": ["src"]
 }

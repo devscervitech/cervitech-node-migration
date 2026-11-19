@@ -1,2 +1,0 @@
-// viewModels/FCMTokenUpdateViewModel.ts
-export {};

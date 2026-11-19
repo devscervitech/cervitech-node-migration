@@ -1,81 +1,128 @@
 import { Request, Response } from 'express';
 import { GoalService } from '../services/goal.service';
-import { SetGoalViewModel, TurnOnGoalViewModel } from '../dtos/goal.DTO';
+import { SetGoalViewModel, TurnOnGoalViewModel } from '../types/goal.types';
 import { logger } from '../utils/logger';
+import { AuthenticatedRequest } from '../middlewares/auth.middleware';
+import { CustomException } from '../utils/customException';
 
 export class GoalController {
-  static async turnOnGoalByUserId(req: Request, res: Response): Promise<void> {
+  static async turnOnGoalByUserId(req: AuthenticatedRequest, res: Response): Promise<void> {
     const model: SetGoalViewModel = req.body;
+    const appUserId = req.user?.userId;
 
-    if (!model || !model.appUserId) {
-      res.status(400).json({ error: 'Goal data with valid user ID is required.' });
+    if (!appUserId) {
+      logger.warn('turn-on goal rejected: missing user ID in token', {
+        username: req.user?.username,
+        email: req.user?.email,
+      });
+      res.status(401).json({ error: 'Unauthorized: User ID is missing.' });
+      return;
+    }
+
+    if (!model || typeof model.targetedAverageNeckAngle !== 'number' || !model.frequency) {
+      logger.warn('turn-on goal rejected: invalid or incomplete request body', {
+        userId: appUserId,
+        targetedAverageNeckAngle: model?.targetedAverageNeckAngle,
+        frequency: model?.frequency,
+        hasGoalCycleCompletionReports: Array.isArray(model?.goalCycleCompletionReports),
+      });
+      res.status(400).json({
+        error: 'Goal data with valid user ID is required (targetedAverageNeckAngle and frequency).',
+      });
       return;
     }
 
     try {
-      const result = await GoalService.turnOnGoalAsync(model);
+      const result = await GoalService.turnOnGoalAsync(appUserId, model);
 
       if (!result) {
+        logger.warn('turn-on goal returned false', {
+          userId: appUserId,
+          targetedAverageNeckAngle: model.targetedAverageNeckAngle,
+          frequency: model.frequency,
+        });
         res.status(400).json({ error: 'Failed to turn on goal.' });
         return;
       }
 
-      res.status(201).json(result);
+      logger.info('Goal turned on successfully', {
+        userId: appUserId,
+        targetedAverageNeckAngle: model.targetedAverageNeckAngle,
+        frequency: model.frequency,
+        reportCount: model.goalCycleCompletionReports?.length ?? 0,
+      });
+      res.status(201).json({ success: true, message: 'Goal turned on' });
     } catch (error) {
-      logger.error('Error turning on goal:', error);
+      logger.error('Error turning on goal', {
+        userId: appUserId,
+        targetedAverageNeckAngle: model.targetedAverageNeckAngle,
+        frequency: model.frequency,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+      if (error instanceof CustomException) {
+        res.status(400).json({ error: error.message });
+        return;
+      }
       res.status(500).json({ error: 'Internal server error' });
     }
   }
 
-  static async turnOffGoalByUserId(req: Request, res: Response): Promise<void> {
+  static async turnOffGoalByUserId(req: AuthenticatedRequest, res: Response): Promise<void> {
     const model: TurnOnGoalViewModel = req.body;
+    const appUserId = req.user?.userId;
 
-    if (!model || !model.appUserId) {
+    if (!appUserId) {
+      res.status(401).json({ error: 'Unauthorized: User ID is missing.' });
+      return;
+    }
+
+    if (!model) {
       res.status(400).json({ error: 'Goal data with valid user ID is required.' });
       return;
     }
 
     try {
-      const result = await GoalService.turnOffGoalAsync(model);
+      const result = await GoalService.turnOffGoalAsync(appUserId, model);
 
       if (!result) {
         res.status(400).json({ error: 'Failed to turn off goal.' });
         return;
       }
 
-      res.status(200).json(result);
+      res.status(200).json({ success: true, message: 'Goal turned off' });
     } catch (error) {
-      logger.error('Error turning off goal:', error);
+      logger.error('Error turning off goal:');
       res.status(500).json({ error: 'Internal server error' });
     }
   }
 
-  static async getGoalsByUserId(req: Request, res: Response): Promise<void> {
-    const model: TurnOnGoalViewModel = req.body;
+  static async getGoalsByUserId(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const appUserId = req.user?.userId;
 
-    if (!model || !model.appUserId) {
-      res.status(400).json({ error: 'User ID is required to fetch goals.' });
+    if (!appUserId) {
+      res.status(401).json({ error: 'Unauthorized: User ID is missing.' });
       return;
     }
 
     try {
-      const result = await GoalService.getAllGoalsByIdAsync(model);
+      const result = await GoalService.getAllGoalsByIdAsync(appUserId);
 
       res.status(200).json({
         success: true,
         data: result ?? [],
       });
     } catch (error) {
-      logger.error('Error fetching goals by user ID:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Internal server error',
-      });
+      logger.error('Error fetching goals by user ID:');
+      res.status(500).json({ error: 'Internal server error' });
     }
   }
 
-  static async getCurrentTargetedAverageNeckAngle(req: Request, res: Response): Promise<void> {
-    const userId = req.query.userid as string;
+  static async getCurrentTargetedAverageNeckAngle(
+    req: AuthenticatedRequest,
+    res: Response
+  ): Promise<void> {
+    const userId = req.user?.userId;
 
     if (!userId || userId.trim() === '') {
       res.status(400).json({ error: 'Valid user ID is required.' });
@@ -90,9 +137,9 @@ export class GoalController {
         return;
       }
 
-      res.status(200).json(result);
+      res.status(200).json({ success: true, data: result });
     } catch (error) {
-      logger.error('Error fetching neck angle data:', error);
+      logger.error('Error fetching neck angle data:');
       res.status(500).json({ error: 'Internal server error' });
     }
   }

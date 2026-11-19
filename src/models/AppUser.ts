@@ -1,18 +1,12 @@
 import mongoose, { Schema, Document } from 'mongoose';
 import { IUser } from './User';
 import { MOBILE_CHANNEL } from '../enums/mobileChannel';
-import { NeckAngleRecordSchema, INeckAngleRecord } from './NeckAngleRecord';
-import { GoalSchema, IGoal } from './Goal';
+import { INeckAngleRecord, NeckAngleRecordSchema } from './NeckAngleRecord';
+import { IGoal, GoalSchema } from './Goal';
 
 export interface IAppUser extends IUser {
-  email: string;
-  firstName: string;
-  lastName: string;
-  pictureUrl: string;
   fcmToken: string;
   username: string;
-  hash: string;
-  salt: string;
   lastLoginDateTime: Date;
   allowPushNotifications: boolean;
   hasPaid: boolean;
@@ -20,15 +14,24 @@ export interface IAppUser extends IUser {
   responseRate: number;
   neckAngleRecords: INeckAngleRecord[];
   goals: IGoal[];
-  mobileChannel: MOBILE_CHANNEL;
+  mobileChannel: MOBILE_CHANNEL; // Now uses number enum
   prompt: number;
   notificationCount?: number;
   currentTargetedAverageNeckAngle: number;
-  dateRegistered: Date;
   notificationResponse?: number;
+  deleted: boolean;
+  dateRegistered: Date; // Keep as Date type
+  lastGoalReminderSentAt?: Date;
+  lastCheckInReminderSentAt?: Date;
+  lastBadPostureAlertSentAt?: Date;
 }
 
 const AppUserSchema: Schema = new Schema<IAppUser>({
+  firstName: { type: String, required: true },
+  lastName: { type: String, required: true },
+  email: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  pictureUrl: { type: String },
   fcmToken: { type: String },
   username: { type: String, required: true, unique: true },
   lastLoginDateTime: { type: Date, default: Date.now },
@@ -36,28 +39,27 @@ const AppUserSchema: Schema = new Schema<IAppUser>({
   hasPaid: { type: Boolean, default: false },
   isGoalOn: { type: Boolean, default: false },
   responseRate: { type: Number, default: 0 },
-  notificationResponse: { type: Number, required: false },
+  notificationResponse: { type: Number },
+  currentTargetedAverageNeckAngle: { type: Number, default: 0 }, 
+  dateRegistered: { type: Date, default: Date.now }, 
 
-  neckAngleRecords: {
-    type: [NeckAngleRecordSchema],
-    default: [],
-  },
+  neckAngleRecords: [NeckAngleRecordSchema],
 
-  goals: {
-    type: [GoalSchema],
-    default: [],
-  },
+  goals: [GoalSchema],
 
   mobileChannel: {
-    type: String,
-    enum: Object.values(MOBILE_CHANNEL),
-    default: MOBILE_CHANNEL.OTHER,
+    type: Number, 
+    enum: Object.values(MOBILE_CHANNEL).filter(val => typeof val === 'number'), 
+    default: MOBILE_CHANNEL.WEB,
   },
-  prompt: { type: Number, required: false },
-  notificationCount: { type: Number, required: false },
-});
+  prompt: { type: Number, default: 5, min: 1 },
+  notificationCount: { type: Number },
+  deleted: { type: Boolean, default: false },
+  lastGoalReminderSentAt: { type: Date },
+  lastCheckInReminderSentAt: { type: Date },
+  lastBadPostureAlertSentAt: { type: Date },
+}, { timestamps: true });
 
-const AppUser =
-  mongoose.models.AppUser || mongoose.model('AppUser', AppUserSchema);
+const AppUser = mongoose.models.AppUser || mongoose.model<IAppUser>('AppUser', AppUserSchema);
 
 export default AppUser;

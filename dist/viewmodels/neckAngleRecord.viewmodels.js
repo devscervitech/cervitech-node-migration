@@ -1,2 +1,0 @@
-// viewModels/NeckAngleRecordViewModel.ts
-export {};

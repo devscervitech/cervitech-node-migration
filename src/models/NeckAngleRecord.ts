@@ -10,7 +10,7 @@ export interface INeckAngleRecord extends Document {
 } 
 
 export const NeckAngleRecordSchema = new Schema<INeckAngleRecord>({
-  appUserId: { type: String, ref: 'User', required: true },
+  appUserId: { type: String, ref: 'AppUser', required: true },
   angle: { type: Number, required: true },
   craniumVertebralAngle: { type: Number, required: true },
   dateTimeRecorded: { type: Date, required: true },

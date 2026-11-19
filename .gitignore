@@ -1,4 +1,10 @@
 # dependencies
 node_modules/
 npm-cache/
+*.env
 .env
+*.env
+.env.prod
+dist/
+.env.staging
+.scratch/

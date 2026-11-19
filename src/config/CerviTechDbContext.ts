@@ -3,7 +3,7 @@ import BackOfficeUser from '../models/BackOfficeUser';
 import AppUser from '../models/AppUser';
 import PasswordResetToken from '../models/PasswordResetToken';
 import { NeckAngleRecordModel } from '../models/NeckAngleRecord';
-import { Goal } from '../models/goal';
+import { Goal } from '../models/Goal';
 import { GoalCycleCompletionReport } from '../models/GoalCycleCompletionReport';
 import TransactionRecord from '../models/TransactionRecord';
 import ResponseRate from '../models/ResponseRate';
