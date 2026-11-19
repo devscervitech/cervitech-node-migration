@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from "express";
-import { TokenUtil, isUserTokenRole } from "../utils/token.util";
+import { TokenUtil, isUserTokenRole, InvalidTokenError } from "../utils/token.util";
 import TokenBlacklist from "../models/TokenBlacklist";
 import type { BackofficeAccessLevel } from "../enums/backofficeAccessLevel";
 
@@ -69,8 +69,10 @@ export const authenticateJWT = async (
     }
 
     next();
-  } catch {
-    // Same status as before; internal error details are no longer returned.
+  } catch (err) {
+    if (!(err instanceof InvalidTokenError)) {
+      return res.status(503).json({ success: false, message: 'Authentication temporarily unavailable' });
+    }
     return res.status(403).json({
       success: false,
       message: "Invalid or expired token.",

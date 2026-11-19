@@ -1,3 +1,4 @@
+import { revokeToken } from '../utils/revokeToken';
 // ✅ Always include `.js` extensions for relative imports in Node16/ESM mode
 import { HashUtil } from '../utils/hash.js';
 import {
@@ -75,7 +76,7 @@ export class AuthService {
         neckAngleRecords: [],
         goals: [],
         mobileChannel: userData.mobileChannel || MOBILE_CHANNEL.WEB,
-        prompt: 0,
+        prompt: 5,
         notificationCount: 0,
         currentTargetedAverageNeckAngle: 0,
         dateRegistered: new Date(),
@@ -177,12 +178,10 @@ export class AuthService {
     if (!normalizedPassword) throw new Error('Password cannot be empty');
 
     const hashed = await HashUtil.hash(normalizedPassword);
-    await AppUser.findByIdAndUpdate(userId, { password: hashed });
+    const updated = await AppUser.findByIdAndUpdate(userId, { password: hashed });
+    if (!updated) throw new Error('User not found');
 
-    await TokenBlacklist.create({
-      token,
-      expiresAt: new Date(),
-    });
+    await revokeToken(token);
 
     return { success: true, message: 'Password reset successfully' };
   }
@@ -272,10 +271,7 @@ export class AuthService {
     }
 
     try {
-      await TokenBlacklist.create({
-        token,
-        expiresAt: new Date(Date.now() + 3600 * 1000),
-      });
+      await revokeToken(token);
 
       user.fcmToken = '';
       await user.save();

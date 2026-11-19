@@ -214,3 +214,15 @@ describe('postBatchNeckAngleRecordAsync — prompt-gated average-angle push', ()
     );
   });
 });
+
+it('averages the returned samples and does not overwrite response rate', async () => {
+  setUser({ _id: 'u1', fcmToken: TOKEN });
+  expect(await NeckAngleService.calculateAverageOfLastSetNeckAngles('u1')).toBe(50);
+  expect(users.get('u1')?.save).not.toHaveBeenCalled();
+});
+it('uses the default prompt for existing signup accounts with zero', async () => {
+  setUser({ _id: 'u1', prompt: 0, fcmToken: TOKEN, allowPushNotifications: true });
+  compareAverage.mockResolvedValue(['title', 'body']);
+  await NeckAngleService.postBatchNeckAngleRecordAsync(batch('u1', 5));
+  expect(sendPush).toHaveBeenCalledTimes(1);
+});
