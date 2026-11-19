@@ -1,7 +1,15 @@
 // src/config/swagger.ts
 import swaggerJSDoc from 'swagger-jsdoc';
 import j2s from 'joi-to-swagger';
-import { signupSchema, loginSchema, logoutSchema } from '../validation/schemas/auth.schema';
+import {
+  signupSchema,
+  loginSchema,
+  logoutSchema,
+  appUserChangePasswordSchema,
+  appUserResetPasswordSchema,
+  appUserResetRequestSchema,
+  appUserVerifyResetOtpSchema,
+} from '../validation/schemas/auth.schema';
 import { transactionSchema } from '../validation/schemas/transaction.schema';
 import {
   createBackofficeUserSchema,
@@ -42,6 +50,10 @@ const definition: swaggerJSDoc.OAS3Definition = {
       SignupRequest: fromJoi(signupSchema),
       LoginRequest: fromJoi(loginSchema),
       LogoutRequest: fromJoi(logoutSchema),
+      AppUserChangePasswordRequest: fromJoi(appUserChangePasswordSchema),
+      AppUserResetPasswordRequest: fromJoi(appUserResetPasswordSchema),
+      AppUserResetRequest: fromJoi(appUserResetRequestSchema),
+      AppUserVerifyResetOtpRequest: fromJoi(appUserVerifyResetOtpSchema),
       TransactionRequest: fromJoi(transactionSchema),
       CreateBackofficeUserRequest: fromJoi(createBackofficeUserSchema),
       UpdateBackofficeProfileRequest: fromJoi(updateBackofficeProfileSchema),

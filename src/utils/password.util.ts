@@ -10,7 +10,11 @@ export function normalizePassword(password: string): string {
  * created before whitespace normalization, allow the exact legacy value once
  * so the caller can replace that hash with the normalized one after login.
  */
-export async function verifyPasswordInput(password: string, hash: string) {
+export async function verifyPasswordInput(
+  password: string,
+  hash: string,
+  legacyInput: string = password
+) {
   const normalizedPassword = normalizePassword(password);
   if (!normalizedPassword) {
     return { isValid: false, normalizedPassword, needsRehash: false };
@@ -20,7 +24,7 @@ export async function verifyPasswordInput(password: string, hash: string) {
     return { isValid: true, normalizedPassword, needsRehash: false };
   }
 
-  if (password !== normalizedPassword && (await HashUtil.compare(password, hash))) {
+  if (legacyInput !== normalizedPassword && (await HashUtil.compare(legacyInput, hash))) {
     return { isValid: true, normalizedPassword, needsRehash: true };
   }
 

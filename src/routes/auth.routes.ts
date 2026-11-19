@@ -2,8 +2,16 @@
 import { Router } from 'express';
 import { AuthController } from '../controllers/auth.controller.js';
 import { authenticateJWT, authorizeRole } from '../middlewares/auth.middleware.js';
+import { authRateLimit } from '../middlewares/authRateLimit.middleware';
 
 const router = Router();
+const signupRateLimit = authRateLimit('app-signup', 5, 60 * 60 * 1000);
+const loginRateLimit = authRateLimit('app-login', 10, 15 * 60 * 1000);
+const resetRequestRateLimit = authRateLimit('app-reset-request', 5, 15 * 60 * 1000);
+const resetVerifyRateLimit = authRateLimit('app-reset-verify', 10, 15 * 60 * 1000);
+const resetPasswordRateLimit = authRateLimit('app-reset-password', 10, 15 * 60 * 1000);
+const usernameCheckRateLimit = authRateLimit('app-username-check', 60, 15 * 60 * 1000);
+const emailCheckRateLimit = authRateLimit('app-email-check', 30, 15 * 60 * 1000);
 
 /**
  * @openapi
@@ -30,8 +38,14 @@ const router = Router();
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       429:
+ *         description: Signup request limit exceeded; retry after the indicated interval
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
  */
-router.post('/signup', AuthController.signup);
+router.post('/signup', signupRateLimit, AuthController.signup);
 
 /**
  * @openapi
@@ -46,15 +60,7 @@ router.post('/signup', AuthController.signup);
  *       content:
  *         application/json:
  *           schema:
- *             type: object
- *             required: [formerPassword, newPassword]
- *             properties:
- *               formerPassword:
- *                 type: string
- *                 description: All whitespace is removed before password verification.
- *               newPassword:
- *                 type: string
- *                 description: All whitespace is removed before password validation and hashing.
+ *             $ref: '#/components/schemas/AppUserChangePasswordRequest'
  *     responses:
  *       200:
  *         description: Password changed
@@ -88,12 +94,7 @@ router.put('/change-password', authenticateJWT, authorizeRole('APP_USER'), AuthC
  *       content:
  *         application/json:
  *           schema:
- *             type: object
- *             required: [email]
- *             properties:
- *               email:
- *                 type: string
- *                 format: email
+ *             $ref: '#/components/schemas/AppUserResetRequest'
  *     responses:
  *       200:
  *         description: If the account exists, an OTP is sent
@@ -102,13 +103,19 @@ router.put('/change-password', authenticateJWT, authorizeRole('APP_USER'), AuthC
  *             schema:
  *               $ref: '#/components/schemas/ApiSuccessResponse'
  *       400:
- *         description: Email missing
+ *         description: Email is malformed or missing
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       429:
+ *         description: Password-reset request limit exceeded
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ApiErrorResponse'
  */
-router.post('/request-reset', AuthController.sendPasswordToken);
+router.post('/request-reset', resetRequestRateLimit, AuthController.sendPasswordToken);
 
 /**
  * @openapi
@@ -121,15 +128,7 @@ router.post('/request-reset', AuthController.sendPasswordToken);
  *       content:
  *         application/json:
  *           schema:
- *             type: object
- *             required: [email, otp]
- *             properties:
- *               email:
- *                 type: string
- *                 format: email
- *               otp:
- *                 type: string
- *                 description: 6-digit code sent by email
+ *             $ref: '#/components/schemas/AppUserVerifyResetOtpRequest'
  *     responses:
  *       200:
  *         description: OTP verified; data contains a short-lived reset token
@@ -143,8 +142,14 @@ router.post('/request-reset', AuthController.sendPasswordToken);
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       429:
+ *         description: OTP verification limit exceeded
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
  */
-router.post('/verify-reset-otp', AuthController.verifyResetOtp);
+router.post('/verify-reset-otp', resetVerifyRateLimit, AuthController.verifyResetOtp);
 
 /**
  * @openapi
@@ -157,14 +162,7 @@ router.post('/verify-reset-otp', AuthController.verifyResetOtp);
  *       content:
  *         application/json:
  *           schema:
- *             type: object
- *             required: [token, newPassword]
- *             properties:
- *               token:
- *                 type: string
- *               newPassword:
- *                 type: string
- *                 description: All whitespace is removed before password validation and hashing.
+ *             $ref: '#/components/schemas/AppUserResetPasswordRequest'
  *     responses:
  *       200:
  *         description: Password reset
@@ -178,8 +176,14 @@ router.post('/verify-reset-otp', AuthController.verifyResetOtp);
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       429:
+ *         description: Password-reset attempt limit exceeded
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
  */
-router.post('/reset-password', AuthController.resetPassword);
+router.post('/reset-password', resetPasswordRateLimit, AuthController.resetPassword);
 
 /**
  * @openapi
@@ -206,8 +210,14 @@ router.post('/reset-password', AuthController.resetPassword);
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       429:
+ *         description: Login request limit exceeded
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
  */
-router.post('/login', AuthController.authenticate);
+router.post('/login', loginRateLimit, AuthController.authenticate);
 
 /**
  * @openapi
@@ -251,18 +261,30 @@ router.post('/logout', authenticateJWT, authorizeRole('APP_USER'), AuthControlle
  *         required: true
  *         schema:
  *           type: string
+ *           minLength: 3
+ *           maxLength: 50
+ *           pattern: '^[a-zA-Z0-9]+$'
  *     responses:
  *       200:
  *         description: Whether the username exists
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 exists:
- *                   type: boolean
+ *               $ref: '#/components/schemas/ApiSuccessResponse'
+ *       400:
+ *         description: Username is malformed or missing
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       429:
+ *         description: Username lookup limit exceeded
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
  */
-router.get("/usernames/exists", AuthController.usernameAlreadyExists);
+router.get("/usernames/exists", usernameCheckRateLimit, AuthController.usernameAlreadyExists);
 
 /**
  * @openapi
@@ -272,7 +294,7 @@ router.get("/usernames/exists", AuthController.usernameAlreadyExists);
  *     summary: Check whether an email address is valid/deliverable
  *     parameters:
  *       - in: query
- *         name: Email
+ *         name: email
  *         required: true
  *         schema:
  *           type: string
@@ -283,11 +305,20 @@ router.get("/usernames/exists", AuthController.usernameAlreadyExists);
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 isValid:
- *                   type: boolean
+ *               $ref: '#/components/schemas/ApiSuccessResponse'
+ *       400:
+ *         description: Email is malformed or missing
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       429:
+ *         description: Email validation limit exceeded
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
  */
-router.get("/validate-email", AuthController.isValidEmail)
+router.get("/validate-email", emailCheckRateLimit, AuthController.isValidEmail)
 
 export default router;

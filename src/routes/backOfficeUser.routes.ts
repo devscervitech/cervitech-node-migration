@@ -6,8 +6,13 @@ import {
   requireAccessLevel,
   requireWritable,
 } from "../middlewares/auth.middleware";
+import { authRateLimit } from "../middlewares/authRateLimit.middleware";
 
 const router = Router();
+const backofficeLoginRateLimit = authRateLimit('backoffice-login', 10, 15 * 60 * 1000);
+const backofficeResetRequestRateLimit = authRateLimit('backoffice-reset-request', 5, 15 * 60 * 1000);
+const backofficeResetVerifyRateLimit = authRateLimit('backoffice-reset-verify', 10, 15 * 60 * 1000);
+const backofficeResetPasswordRateLimit = authRateLimit('backoffice-reset-password', 10, 15 * 60 * 1000);
 
 /**
  * @openapi
@@ -101,8 +106,14 @@ router.post(
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       429:
+ *         description: Login request limit exceeded
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
  */
-router.post("/login", BackOfficeUserController.loginController);
+router.post("/login", backofficeLoginRateLimit, BackOfficeUserController.loginController);
 
 /**
  * @openapi
@@ -129,8 +140,14 @@ router.post("/login", BackOfficeUserController.loginController);
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       429:
+ *         description: Password-reset request limit exceeded
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
  */
-router.post("/forgot-password", BackOfficeUserController.forgotPassword);
+router.post("/forgot-password", backofficeResetRequestRateLimit, BackOfficeUserController.forgotPassword);
 
 /**
  * @openapi
@@ -157,8 +174,14 @@ router.post("/forgot-password", BackOfficeUserController.forgotPassword);
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       429:
+ *         description: OTP verification limit exceeded
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
  */
-router.post("/verify-reset-otp", BackOfficeUserController.verifyResetOtp);
+router.post("/verify-reset-otp", backofficeResetVerifyRateLimit, BackOfficeUserController.verifyResetOtp);
 
 /**
  * @openapi
@@ -185,8 +208,14 @@ router.post("/verify-reset-otp", BackOfficeUserController.verifyResetOtp);
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       429:
+ *         description: Password-reset attempt limit exceeded
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
  */
-router.post("/reset-password", BackOfficeUserController.resetPassword);
+router.post("/reset-password", backofficeResetPasswordRateLimit, BackOfficeUserController.resetPassword);
 
 /**
  * @openapi

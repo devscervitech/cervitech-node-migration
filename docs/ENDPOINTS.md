@@ -8,6 +8,10 @@ Back-office access levels are `ADMIN` and `OPERATOR`. Only `ADMIN` accounts can 
 
 ## Auth (`/api/v1/auth`)
 
+Successful auth responses use `{ success, message, data }`; username and email checks return their boolean under `data.exists` and `data.isValid`. Public auth endpoints have per-IP rate limits and return HTTP 429 with `Retry-After` when a limit is exceeded. Configure `TRUST_PROXY_HOPS` to the number of trusted reverse proxies; use `0` when clients connect directly. Signup, login, password-reset, username-check, and email-check limits are documented in their OpenAPI route definitions.
+
+The app-user limits are: signup 5/hour; login 10/15 minutes; reset request 5/15 minutes; OTP verification 10/15 minutes; reset attempts 10/15 minutes; username check 60/15 minutes; email check 30/15 minutes. Back-office login is limited to 10/15 minutes, reset requests to 5/15 minutes, and OTP verification/reset attempts to 10/15 minutes.
+
 - POST `/signup` — public — `AuthController.signup` — body: `username, email, password`
 - PUT `/change-password` — auth+role `APP_USER` — `AuthController.changePassword` — body: `oldPassword, newPassword`
 - POST `/request-reset` — public — `AuthController.sendPasswordToken` — body: `email` (sends a 6-digit OTP; returns `otp` in the response only when `OTP_DEBUG=true`)

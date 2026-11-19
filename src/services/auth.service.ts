@@ -30,18 +30,31 @@ import { AuthValidation } from '../validation/authValidation.js';
 import { Goal } from '../models/Goal.js';
 import { toAppUserViewModel } from '../viewmodels/AppUser.viewmodel.js';
 import { normalizePassword, verifyPasswordInput } from '../utils/password.util.js';
+import { passwordPolicySchema } from '../validation/schemas/auth.schema.js';
+
+function formatValidationError(error: { details: Array<{ message: string }> }): string {
+  return error.details.map(({ message }) => message.replace(/\"/g, '')).join('; ');
+}
+
+function escapeRegExpLiteral(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+type ChangePasswordResult =
+  | { success: true; message: string }
+  | { success: false; message: string; code?: 'INVALID_NEW_PASSWORD' };
 
 export class AuthService {
   static async signup(data: SignupRequest): Promise<SignupResponse> {
-    const validationError = AuthValidation.signupValidation(data);
-    if (validationError) {
+    const validation = AuthValidation.signupValidation(data);
+    if (!validation.valid) {
       return {
         success: false,
-        message: validationError,
+        message: validation.error,
       };
     }
 
-    const { password, confirmPassword, ...userData } = data;
+    const { password, confirmPassword, ...userData } = validation.value;
     const existing = await AppUser.findOne({ email: userData.email });
     if (existing) {
       return {
@@ -115,7 +128,11 @@ export class AuthService {
     }
   }
 
-  static async changePassword(userId: string, formerPassword: string, newPassword: string) {
+  static async changePassword(
+    userId: string,
+    formerPassword: string,
+    newPassword: string
+  ): Promise<ChangePasswordResult> {
     const user = await AppUser.findById(userId);
 
     if (!user) {
@@ -128,11 +145,15 @@ export class AuthService {
     if (!same.isValid) {
       return { success: false, message: 'Incorrect former password, Try again or RESET password' };
     }
-    const normalizedNewPassword = normalizePassword(newPassword);
-    if (!normalizedNewPassword) {
-      return { success: false, message: 'New password cannot be empty' };
+    const passwordValidation = passwordPolicySchema.validate(newPassword, { abortEarly: false });
+    if (passwordValidation.error) {
+      return {
+        success: false,
+        code: 'INVALID_NEW_PASSWORD',
+        message: formatValidationError(passwordValidation.error),
+      };
     }
-    const newPassHash = await HashUtil.hash(normalizedNewPassword);
+    const newPassHash = await HashUtil.hash(passwordValidation.value);
 
     await AppUser.findByIdAndUpdate(userId, { password: newPassHash });
 
@@ -173,10 +194,10 @@ export class AuthService {
 
     const { userId } = TokenUtil.verifyToken(token, 'password_reset');
 
-    const normalizedPassword = normalizePassword(newPassword);
-    if (!normalizedPassword) throw new Error('Password cannot be empty');
+    const passwordValidation = passwordPolicySchema.validate(newPassword, { abortEarly: false });
+    if (passwordValidation.error) throw new Error(formatValidationError(passwordValidation.error));
 
-    const hashed = await HashUtil.hash(normalizedPassword);
+    const hashed = await HashUtil.hash(passwordValidation.value);
     await AppUser.findByIdAndUpdate(userId, { password: hashed });
 
     await TokenBlacklist.create({
@@ -188,15 +209,15 @@ export class AuthService {
   }
 
   static async authenticatev1(model: LoginRequest): Promise<LoginResponseResult> {
-    const { emailOrUsername, password, mobileChannel } = model;
-
-    const validationError = AuthValidation.loginValidation(model);
-    if (validationError) {
+    const validation = AuthValidation.loginValidation(model);
+    if (!validation.valid) {
       return {
         success: false,
-        message: validationError,
+        message: validation.error,
       };
     }
+
+    const { emailOrUsername, password, mobileChannel } = validation.value;
 
     const user = await AppUser.findOne({
       $or: [{ email: emailOrUsername }, { username: emailOrUsername }],
@@ -216,7 +237,7 @@ export class AuthService {
       };
     }
 
-    const passwordCheck = await verifyPasswordInput(password, user.password);
+    const passwordCheck = await verifyPasswordInput(password, user.password, model.password);
     if (!passwordCheck.isValid) {
       return {
         success: false,
@@ -296,9 +317,10 @@ export class AuthService {
   }
 
   static async usernameAlreadyExists(username: string): Promise<boolean> {
+    if (typeof username !== 'string') throw new TypeError('Username must be a string');
     const normalizedUsername = username.toLowerCase().trim();
     const exists = await AppUser.exists({
-      username: { $regex: new RegExp(`^${normalizedUsername}$`, 'i') },
+      username: { $regex: new RegExp(`^${escapeRegExpLiteral(normalizedUsername)}$`, 'i') },
     });
     return !!exists;
   }
