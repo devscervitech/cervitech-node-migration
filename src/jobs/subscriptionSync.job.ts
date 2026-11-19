@@ -100,5 +100,5 @@ export const startSubscriptionSyncJob = () => {
         error: error instanceof Error ? error.message : String(error),
       });
     }
-  });
+  }, { timezone: 'UTC' });
 };

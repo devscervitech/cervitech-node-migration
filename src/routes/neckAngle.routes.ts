@@ -119,6 +119,7 @@ router.get('/reports/current-day', authenticateJWT, NeckAngleController.getCurre
  * /neck-angle/weekly-averages:
  *   post:
  *     tags: [NeckAngle]
+ *     description: Uses Monday-start UTC calendar weeks, including a sixth partial week when present.
  *     summary: Compute each week-of-month's average neck angle from raw records
  *     requestBody:
  *       required: true

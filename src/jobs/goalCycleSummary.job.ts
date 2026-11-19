@@ -17,5 +17,5 @@ export const startGoalCycleSummaryJob = () => {
     } catch (err: any) {
       logger.error(`Error in goal-cycle summary job: ${err.message}`);
     }
-  });
+  }, { timezone: 'UTC' });
 };

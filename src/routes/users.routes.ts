@@ -48,6 +48,7 @@ router.get('/', authenticateJWT, authorizeRole('BACKOFFICE_USER'), UserControlle
  * /users/response-rate:
  *   get:
  *     tags: [User]
+ *     description: Day boundaries and hourly buckets use UTC.
  *     summary: "[Back office] Get a user's response rate for a given date"
  *     parameters:
  *       - in: query
