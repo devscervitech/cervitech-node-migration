@@ -62,6 +62,8 @@ router.post('/signup', signupRateLimit, AuthController.signup);
  *           schema:
  *             $ref: '#/components/schemas/AppUserChangePasswordRequest'
  *     responses:
+ *       503:
+ *         description: Authentication storage temporarily unavailable
  *       200:
  *         description: Password changed
  *         content:
@@ -157,6 +159,7 @@ router.post('/verify-reset-otp', resetVerifyRateLimit, AuthController.verifyRese
  *   post:
  *     tags: [Auth]
  *     summary: Reset a password using a reset token
+ *     description: Requires a password_reset token scoped to APP_USER; tokens from other account types are rejected.
  *     requestBody:
  *       required: true
  *       content:
@@ -228,6 +231,8 @@ router.post('/login', loginRateLimit, AuthController.authenticate);
  *     security:
  *       - bearerAuth: []
  *     responses:
+ *       503:
+ *         description: Authentication storage temporarily unavailable
  *       200:
  *         description: Logged out
  *         content:

@@ -1,3 +1,4 @@
+import { revokeToken } from '../utils/revokeToken';
 import { Request, Response } from 'express';
 import { AuthService } from '../services/auth.service';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
@@ -95,7 +96,6 @@ export const AuthController = {
       if (!userId) return sendError(res, 401, 'User ID missing');
       if (!token) return sendError(res, 400, 'Token is required');
 
-      await TokenBlacklist.create({ token });
       const result = await AuthService.logout({ userId, token });
 
       if (!result.success) return sendError(res, 400, result.message);

@@ -1,3 +1,4 @@
+import { revokeToken } from '../utils/revokeToken';
 import BackofficeUser from "../models/BackOfficeUser";
 import BackofficeSecurityState, {
   ACTIVE_BACKOFFICE_ADMIN_STATE_ID,
@@ -245,7 +246,7 @@ class BackofficeUserService {
 
     const existing = await TokenBlacklist.findOne({ token });
     if (!existing) {
-      await TokenBlacklist.create({ token });
+      await revokeToken(token);
     }
 
     return { success: true, message: "User logged out successfully" };
@@ -296,7 +297,7 @@ class BackofficeUserService {
 
     await OtpService.verifyResetCode(email, otp);
 
-    const resetToken = TokenUtil.generateToken(String(user._id), 'password_reset');
+    const resetToken = TokenUtil.generateToken(String(user._id), 'password_reset', undefined, 'BACKOFFICE_USER');
 
     return { token: resetToken, message: "OTP verified successfully" };
   }
@@ -308,7 +309,7 @@ class BackofficeUserService {
     const blacklisted = await TokenBlacklist.findOne({ token });
     if (blacklisted) throw new Error("This token has already been used or is invalid");
 
-    const { userId } = TokenUtil.verifyToken(token, 'password_reset');
+    const { userId } = TokenUtil.verifyToken(token, 'password_reset', 'BACKOFFICE_USER');
 
     const user = await BackofficeUser.findById(userId).select("+password");
     if (!user) throw new Error("Invalid or expired token");
@@ -316,7 +317,7 @@ class BackofficeUserService {
     user.password = await HashUtil.hash(normalizedPassword);
     await user.save();
 
-    await TokenBlacklist.create({ token });
+    await revokeToken(token);
 
     return { success: true, message: "Password reset successfully" };
   }

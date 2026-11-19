@@ -189,6 +189,7 @@ router.post("/verify-reset-otp", backofficeResetVerifyRateLimit, BackOfficeUserC
  *   post:
  *     tags: [BackOfficeUser]
  *     summary: Reset a back-office user's password using a reset token
+ *     description: Requires a password_reset token scoped to BACKOFFICE_USER; tokens from other account types are rejected.
  *     requestBody:
  *       required: true
  *       content:
@@ -226,6 +227,8 @@ router.post("/reset-password", backofficeResetPasswordRateLimit, BackOfficeUserC
  *     security:
  *       - bearerAuth: []
  *     responses:
+ *       503:
+ *         description: Authentication storage temporarily unavailable
  *       200:
  *         description: Logged out
  *         content:
@@ -256,6 +259,8 @@ router.post("/logout", authenticateJWT, authorizeRole('BACKOFFICE_USER'), BackOf
  *           schema:
  *             $ref: '#/components/schemas/BackofficeChangePasswordRequest'
  *     responses:
+ *       503:
+ *         description: Authentication storage temporarily unavailable
  *       200:
  *         description: Password changed
  *         content:
@@ -299,6 +304,8 @@ router.post("/change-password", authenticateJWT, authorizeRole('BACKOFFICE_USER'
  *         schema:
  *           type: integer
  *     responses:
+ *       503:
+ *         description: Authentication storage temporarily unavailable
  *       200:
  *         description: Users retrieved
  *         content:
@@ -347,6 +354,8 @@ router.get(
  *         schema:
  *           type: string
  *     responses:
+ *       503:
+ *         description: Authentication storage temporarily unavailable
  *       200:
  *         description: User deleted
  *         content:
@@ -414,6 +423,8 @@ router.delete(
  *           schema:
  *             $ref: '#/components/schemas/UpdateBackofficeProfileRequest'
  *     responses:
+ *       503:
+ *         description: Authentication storage temporarily unavailable
  *       200:
  *         description: User updated
  *         content:
@@ -537,6 +548,8 @@ router.put(
  *         schema:
  *           type: string
  *     responses:
+ *       503:
+ *         description: Authentication storage temporarily unavailable
  *       200:
  *         description: User found
  *         content:

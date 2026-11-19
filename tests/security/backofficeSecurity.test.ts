@@ -390,8 +390,8 @@ describe('back-office password and account data security', () => {
     expect(hasAdminGate(backOfficeUserRoutes, 'put', '/:id/access')).toBe(true);
     expect(hasAdminGate(backOfficeUserRoutes, 'delete', '/:id')).toBe(true);
     expect(hasAdminGate(usersRoutes, 'delete', '/:id')).toBe(true);
-    expect(hasAdminGate(neckAngleRoutes, 'post', '/records/random')).toBe(true);
-    expect(hasAdminGate(neckAngleRoutes, 'get', '/test-users')).toBe(true);
+    expect(neckAngleRoutes.stack.some((layer: any) => layer.route?.path === '/records/random')).toBe(false);
+    expect(neckAngleRoutes.stack.some((layer: any) => layer.route?.path === '/test-users')).toBe(false);
   });
 
   it('requires app-user tokens on authenticated app-user routes', () => {

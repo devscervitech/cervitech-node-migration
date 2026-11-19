@@ -7,10 +7,15 @@ import BackofficeUser from "../models/BackOfficeUser";
 import dotenv from "dotenv";
 dotenv.config();
 
-// Secrets
-const APP_USER_SECRET = process.env.APP_USER_JWT_SECRET || "appuser-secret-key";
-const BACKOFFICE_SECRET = process.env.BACKOFFICE_JWT_SECRET || "backoffice-secret-key";
-const GENERAL_TOKEN_SECRET = process.env.GENERAL_TOKEN_SECRET || "general-secret-key";
+function requiredSecret(name: string): string {
+  const value = process.env[name];
+  if (!value?.trim()) throw new Error(`Missing required signing secret: ${name}`);
+  return value;
+}
+const APP_USER_SECRET = requiredSecret('APP_USER_JWT_SECRET');
+const BACKOFFICE_SECRET = requiredSecret('BACKOFFICE_JWT_SECRET');
+const GENERAL_TOKEN_SECRET = requiredSecret('GENERAL_TOKEN_SECRET');
+export class InvalidTokenError extends Error {}
 
 export interface BaseTokenPayload {
   userId: string;
@@ -91,22 +96,23 @@ export class TokenUtil {
   }
 
   // General-purpose Token (for password reset, account deletion, etc.)
-  static generateToken(identifier: string, purpose: GeneralTokenPurpose, email?: string): string {
+  static generateToken(identifier: string, purpose: GeneralTokenPurpose, email?: string, realm: "APP_USER" | "BACKOFFICE_USER" = "APP_USER"): string {
   const payload: { userId: string; purpose: GeneralTokenPurpose; email?: string } = {
     userId: identifier,
     purpose,
   };
   if (email) payload.email = email;
-  return jwt.sign(payload, GENERAL_TOKEN_SECRET, { expiresIn: "30m" });
+  return jwt.sign(payload, GENERAL_TOKEN_SECRET, { expiresIn: "30m", audience: `${realm}:${purpose}` });
 }
 
 static verifyToken(
   token: string,
-  expectedPurpose: GeneralTokenPurpose
+  expectedPurpose: GeneralTokenPurpose,
+  realm: "APP_USER" | "BACKOFFICE_USER" = "APP_USER"
 ): { userId: string; purpose: GeneralTokenPurpose; email?: string } {
   let decoded: { userId: string; purpose?: GeneralTokenPurpose; email?: string };
   try {
-    decoded = jwt.verify(token, GENERAL_TOKEN_SECRET) as {
+    decoded = jwt.verify(token, GENERAL_TOKEN_SECRET, { audience: `${realm}:${expectedPurpose}` }) as {
       userId: string;
       purpose?: GeneralTokenPurpose;
       email?: string;
@@ -137,6 +143,7 @@ static async verifyUserToken(token: string): Promise<BaseTokenPayload> {
 static async verifyUserTokenWithAccount(
   token: string
 ): Promise<{ payload: BaseTokenPayload; account: AuthenticatedAccount }> {
+  let payload: BaseTokenPayload;
   try {
     const decoded = jwt.decode(token) as BaseTokenPayload | null;
     if (!decoded || !isUserTokenRole(decoded.role)) throw new Error("Invalid token structure");
@@ -144,17 +151,21 @@ static async verifyUserTokenWithAccount(
     const secret =
       decoded.role === "BACKOFFICE_USER" ? BACKOFFICE_SECRET : APP_USER_SECRET;
 
-    const payload = jwt.verify(token, secret) as BaseTokenPayload;
+    payload = jwt.verify(token, secret) as BaseTokenPayload;
     if (payload.role !== decoded.role) throw new Error("Invalid token structure");
 
+    if (!payload.userId) throw new Error('Missing user ID');
+  } catch {
+    throw new InvalidTokenError('Invalid or expired token');
+  }
     if (payload.role === "APP_USER") {
       const user = await AppUser.findById(payload.userId)
         .select("username email deleted")
         .lean<Record<string, unknown>>();
 
-      if (!user) throw new Error("User not found");
+      if (!user) throw new InvalidTokenError("User not found");
       // ✅ Check if the user is deleted
-      if (!isStoredNotDeleted(user.deleted)) throw new Error("User account is deleted");
+      if (!isStoredNotDeleted(user.deleted)) throw new InvalidTokenError("User account is deleted");
 
       return {
         payload,
@@ -171,7 +182,7 @@ static async verifyUserTokenWithAccount(
       .select("username email accessLevel readOnly")
       .lean<Record<string, unknown>>();
 
-    if (!user) throw new Error("User not found");
+    if (!user) throw new InvalidTokenError("User not found");
     // BackofficeUser has no `deleted` path; it was never a rejection reason.
 
     return {
@@ -185,9 +196,5 @@ static async verifyUserTokenWithAccount(
         readOnly: user.readOnly !== false,
       },
     };
-  } catch (err) {
-    throw new Error("Invalid or expired token");
-  }
 }
-
 }
