@@ -14,7 +14,7 @@ const router = Router();
  * /users:
  *   get:
  *     tags: [User]
- *     summary: Get a user by email
+ *     summary: "[Back office] Get a user by email"
  *     parameters:
  *       - in: query
  *         name: email
@@ -22,7 +22,13 @@ const router = Router();
  *         schema:
  *           type: string
  *           format: email
+ *     security:
+ *       - bearerAuth: []
  *     responses:
+ *       401:
+ *         description: Not authenticated
+ *       403:
+ *         description: Account role not permitted
  *       200:
  *         description: User found
  *       400:
@@ -30,14 +36,14 @@ const router = Router();
  *       404:
  *         description: User not found
  */
-router.get('/', UserController.getByEmail);
+router.get('/', authenticateJWT, authorizeRole('BACKOFFICE_USER'), UserController.getByEmail);
 
 /**
  * @openapi
  * /users/response-rate:
  *   get:
  *     tags: [User]
- *     summary: Get a user's response rate for a given date
+ *     summary: "[Back office] Get a user's response rate for a given date"
  *     parameters:
  *       - in: query
  *         name: id
@@ -50,7 +56,13 @@ router.get('/', UserController.getByEmail);
  *         schema:
  *           type: string
  *           format: date
+ *     security:
+ *       - bearerAuth: []
  *     responses:
+ *       401:
+ *         description: Not authenticated
+ *       403:
+ *         description: Account role not permitted
  *       200:
  *         description: Response rate computed
  *         content:
@@ -64,53 +76,29 @@ router.get('/', UserController.getByEmail);
  *             schema:
  *               $ref: '#/components/schemas/ApiErrorResponse'
  */
-router.get('/response-rate', UserController.getResponseRate);
+router.get('/response-rate', authenticateJWT, authorizeRole('BACKOFFICE_USER'), UserController.getResponseRate);
 
-/**
- * @openapi
- * /users/fcm-token:
- *   get:
- *     tags: [User]
- *     summary: Get a user's FCM token by username
- *     parameters:
- *       - in: query
- *         name: username
- *         required: true
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: Token found
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                 data:
- *                   type: object
- *                   properties:
- *                     fcmToken:
- *                       type: string
- *       404:
- *         description: User not found
- */
-router.get('/fcm-token', UserController.getFCMTokenByUsername);
+
 
 /**
  * @openapi
  * /users/{id}:
  *   get:
  *     tags: [User]
- *     summary: Get a user profile by ID
+ *     summary: "[Back office] Get a user profile by ID"
  *     parameters:
  *       - in: path
  *         name: id
  *         required: true
  *         schema:
  *           type: string
+ *     security:
+ *       - bearerAuth: []
  *     responses:
+ *       401:
+ *         description: Not authenticated
+ *       403:
+ *         description: Account role not permitted
  *       200:
  *         description: User found
  *       400:
@@ -118,7 +106,7 @@ router.get('/fcm-token', UserController.getFCMTokenByUsername);
  *       404:
  *         description: User not found
  */
-router.get('/:id', UserController.fetch_user_profile);
+router.get('/:id', authenticateJWT, authorizeRole('BACKOFFICE_USER'), UserController.fetch_user_profile);
 
 // -------------------------
 // Back office (admin)
