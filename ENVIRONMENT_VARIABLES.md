@@ -243,3 +243,11 @@ Used for logging and UI indication of environment status.
 - Rotate secrets regularly in production
 
 Google Play payments require `GOOGLE_PLAY_SUBSCRIPTION_IDS`: a comma-separated allowlist of subscription product IDs. Legacy status-only payment submissions are rejected. Existing duplicate paymentRef records must be reconciled before creating the unique paymentRef index in production.
+
+### Token security rollout
+
+`APP_USER_JWT_SECRET`, `BACKOFFICE_JWT_SECRET`, and `GENERAL_TOKEN_SECRET` are required at boot; blank values are rejected. Use independent signing secrets. Reset/deletion tokens issued before audience scoping must be reissued.
+
+Before deploying, pause auth writes and migrate `tokenblacklists`: populate `expiresAt` from each JWT's numeric `exp`, reconcile duplicate tokens while retaining the latest expiry, drop the old `createdAt_1` TTL index, and create unique `{ token: 1 }` and TTL `{ expiresAt: 1 }` (`expireAfterSeconds: 0`) indexes. Retain malformed legacy entries for review rather than deleting them. Verify the indexes before resuming traffic. Schema changes alone do not remove the old TTL index. Tokens already removed by that index cannot be recovered; rotating access-token secrets invalidates those sessions and requires users to sign in again.
+
+Authenticated endpoints return 503 when blacklist/user lookup fails; invalid credentials continue to return 403 (revoked tokens return 401).
