@@ -47,7 +47,7 @@ export class OtpService {
     try {
       await EmailUtils.sendPasswordResetOtpEmail(normalized, username, code);
     } catch (err: any) {
-      logger.error('Failed to send OTP email', { error: err.message });
+      logger.error('Failed to send OTP email', { error: err });
       throw new Error('Failed to send password reset email');
     }
 

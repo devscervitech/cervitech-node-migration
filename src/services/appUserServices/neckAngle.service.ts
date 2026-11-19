@@ -103,7 +103,7 @@ export class NeckAngleService {
         return { week, averageNeckAngle: bucket ? bucket.total / bucket.count : 0 };
       });
     } catch (error: any) {
-      logger.error('Error in getEachWeekOfTheMonthAverageNeckAngle:', error.message);
+      logger.error('Error in getEachWeekOfTheMonthAverageNeckAngle:', error);
       throw new CustomException('Error calculating weekly averages.');
     }
   }
@@ -137,7 +137,7 @@ export class NeckAngleService {
 
       return averages;
     } catch (error: any) {
-      logger.error('Error in getEachMonthOfTheYearAverageNeckAngle:', error.message);
+      logger.error('Error in getEachMonthOfTheYearAverageNeckAngle:', error);
       throw new CustomException('Error calculating yearly averages.');
     }
   }
@@ -170,7 +170,7 @@ export class NeckAngleService {
 
       return averages;
     } catch (error: any) {
-      logger.error('Error in getEachDayOfTheWeekAverageNeckAngle:', error.message);
+      logger.error('Error in getEachDayOfTheWeekAverageNeckAngle:', error);
       throw new CustomException('Error calculating daily averages.');
     }
   }

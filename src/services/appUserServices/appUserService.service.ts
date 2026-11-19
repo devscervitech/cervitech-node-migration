@@ -94,7 +94,6 @@ export class AppUserService {
   static async deleteByIdAsync(id: string): Promise<boolean> {
     try {
       const user = await AppUser.findById(id);
-      console.log(user);
 
       if (!user) {
         throw new CustomException('User does not exist');
@@ -112,7 +111,7 @@ export class AppUserService {
       return true;
     } catch (ex: any) {
       if (ex instanceof CustomException) {
-        logger.error(ex.message);
+        logger.error(ex);
       } else {
         logger.error('Unexpected error while deleting by ID', { error: ex });
       }
@@ -141,7 +140,7 @@ export class AppUserService {
       return true;
     } catch (ex: any) {
       if (ex instanceof CustomException) {
-        logger.error(ex.message);
+        logger.error(ex);
       } else {
         logger.error('Unexpected error while deleting by email', { error: ex });
       }
@@ -159,15 +158,13 @@ export class AppUserService {
       }
 
       const token = TokenUtil.generateToken(user._id.toString(), 'account_deletion');
-      console.log('Generated token:', token);
 
-      console.log('Token before sending email:', token);
       await EmailUtils.sendAccountDeletionRequest(normalizedEmail, user.username, token);
 
       return true;
     } catch (ex: any) {
       if (ex instanceof CustomException) {
-        logger.error(ex.message);
+        logger.error(ex);
       } else {
         logger.error('Unexpected error while requesting account deletion', {
           error: ex,
@@ -217,20 +214,11 @@ export class AppUserService {
       const startOfDay = startOfDayUtc(day);
 
       const endOfDay = endOfDayUtc(day);
-      console.log(
-        'Calculating response rate for userId:',
-        userId,
-        'from',
-        startOfDay,
-        'to',
-        endOfDay
-      );
       const responseRates = await ResponseRate.find({
         appUserId: userId,
         dateCreated: { $gte: startOfDay, $lte: endOfDay },
       });
 
-      console.log('Fetched response rates:', responseRates);
 
       const totalPrompts = responseRates.reduce((sum, r) => sum + (r.prompt || 0), 0);
       const totalResponses = responseRates.reduce((sum, r) => sum + (r.response || 0), 0);

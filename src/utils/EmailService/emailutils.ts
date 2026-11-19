@@ -1,3 +1,4 @@
+import { logger } from '../logger';
 // src/utils/EmailService/emailutils.ts
 import { EmailClient } from "@azure/communication-email";
 import * as dotenv from "dotenv";
@@ -22,10 +23,9 @@ export class EmailUtils {
       const poller = await EmailUtils.client.beginSend(message);
       const response = await poller.pollUntilDone();
 
-      console.log(`Email sent successfully to ${to}`);
       return response;
     } catch (error: any) {
-      console.error(`Failed to send email to ${to}:`, error.message);
+      logger.error('Email delivery failed', error);
       throw error;
     }
   }
@@ -46,7 +46,6 @@ export class EmailUtils {
   }
 
   static async sendAccountDeletionRequest(to: string, username: string, token: string) {
-      console.log("Token received in EmailUtils:", token);
       const html = EmailTemplates.accountDeletionRequest(username, to, token);
       return await EmailUtils.sendEmail(to, "Account Deletion Request", html);
   }

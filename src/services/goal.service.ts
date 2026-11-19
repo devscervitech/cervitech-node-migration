@@ -88,7 +88,7 @@ export class GoalService {
 
       return true;
     } catch (error: any) {
-      logger.error(error.message);
+      logger.error(error);
       throw new CustomException(error.message);
     }
   }
@@ -121,7 +121,7 @@ export class GoalService {
 
       return reports;
     } catch (error: any) {
-      logger.error(error.message);
+      logger.error(error);
       throw new CustomException(error.message);
     }
   }
@@ -130,10 +130,9 @@ export class GoalService {
     try {
       const goals = await Goal.find({ appUserId }).sort({ dateSet: -1 }).exec();
       const lastGoal = goals[0]; // Most recent goal due to sorting
-      console.log('Last Goal:', lastGoal);
       return lastGoal?.targetedAverageNeckAngle ?? 0;
     } catch (error: any) {
-      logger.error(error.message);
+      logger.error(error);
       throw new CustomException(error.message);
     }
   }

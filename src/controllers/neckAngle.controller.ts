@@ -47,7 +47,7 @@ export class NeckAngleController {
       });
     } catch (error: unknown) {
       const err = error instanceof Error ? error : new Error('Custom exception');
-      logger.error(err.message);
+      logger.error(err);
 
       res.status(500).json({
         statusCode: 500,
@@ -68,7 +68,6 @@ export class NeckAngleController {
       if (!Array.isArray(records)) {
         return res.status(400).json({ error: 'records must be an array' });
       }
-      console.log('records received:', records);
       const result = await NeckAngleService.getEachWeekOfTheMonthAverageNeckAngle(records);
       res.json(result);
     } catch (error: any) {
@@ -89,7 +88,7 @@ export class NeckAngleController {
   //     });
   //   } catch (error: unknown) {
   //     const err = error instanceof Error ? error : new Error('Custom error');
-  //     logger.error(err.message);
+  //     logger.error(err);
 
   //     res.status(500).json({
   //       statusCode: responses[ApiResponseStatus.Failed],
@@ -114,7 +113,7 @@ export class NeckAngleController {
       });
     } catch (error: unknown) {
       const err = error instanceof Error ? error : new Error('Custom error');
-      logger.error(err.message);
+      logger.error(err);
 
       res.status(500).json({
         statusCode: 500,
@@ -149,7 +148,7 @@ export class NeckAngleController {
       });
     } catch (error: unknown) {
       const err = error instanceof Error ? error : new Error('Custom error');
-      logger.error(err.message);
+      logger.error(err);
 
       res.status(500).json({
         statusCode: 500,

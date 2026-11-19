@@ -4,6 +4,8 @@ import { IUser, UserSchema } from "./userFields";
 import { BACKOFFICE_ACCESS_LEVELS, BackofficeAccessLevel } from "../enums/backofficeAccessLevel";
 
 export interface IBackofficeUser extends IUser {
+  resetToken?: string;
+  resetTokenExpires?: Date;
   username: string;
   accessLevel: BackofficeAccessLevel;
   readOnly: boolean;
@@ -11,6 +13,9 @@ export interface IBackofficeUser extends IUser {
 
 const BackofficeUserSchema: Schema = new Schema<IBackofficeUser>({
   ...UserSchema.obj,
+  // Retain exclusions for legacy stored reset fields; new resets use OTP tokens.
+  resetToken: { type: String, select: false },
+  resetTokenExpires: { type: Date, select: false },
   // Hide hashes from ordinary queries. Authentication and password changes
   // explicitly opt in with `.select("+password")`.
   password: { type: String, required: true, select: false },

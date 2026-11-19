@@ -1,79 +1,45 @@
 import winston from 'winston';
+import { redact } from './logRedaction';
+
+// Redact before any transport, including process exception/rejection handlers.
+export const safeLogFormat = winston.format(info => {
+  const safe = redact(info) as Record<string, unknown>;
+  for (const key of Object.keys(info)) delete info[key];
+  Object.assign(info, safe);
+  // Never retain an already-rendered message supplied by an upstream formatter.
+  delete info[Symbol.for('message')];
+  delete info[Symbol.for('splat')];
+  return info;
+});
 
 export class logger {
-    private static logger = winston.createLogger({
-        level: 'info',
-        format: winston.format.combine(
-            winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-            winston.format.printf(({ timestamp, level, message, ...meta }) => {
-                const colors = {
-                    error: '\x1b[31m',   // Red
-                    warn: '\x1b[33m',    // Yellow
-                    info: '\x1b[36m',    // Cyan
-                    debug: '\x1b[35m',   // Magenta
-                    reset: '\x1b[0m'
-                };
+  private static logger = winston.createLogger({
+    level: process.env.LOG_LEVEL || 'info',
+    format: winston.format.combine(safeLogFormat(), winston.format.timestamp(), winston.format.json()),
+    transports: [new winston.transports.Console()],
+    exceptionHandlers: [new winston.transports.Console()],
+    rejectionHandlers: [new winston.transports.Console()],
+  });
 
-                const color = colors[level as keyof typeof colors] || colors.reset;
-                const coloredLevel = `${color}${level.toUpperCase()}${colors.reset}`;
-
-                // key=value formatting for meta
-                const metaString = Object.keys(meta).length
-                    ? ' | ' + Object.entries(meta)
-                        .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
-                        .join(' ')
-                    : '';
-
-                return `[${timestamp}] [${coloredLevel}]: ${message}${metaString}`;
-            })
-        ),
-        transports: [
-            new winston.transports.Console(),
-        ],
-    });
-
-    // Info
-    static info(message: string, meta: Record<string, any> = {}): void {
-        logger.logger.info(message, meta);
-    }
-
-    // Error
-    static error(message: string, meta?: unknown): void {
-        logger.logger.error(message, meta);
-    }
-
-    
-    // Warn
-    static warn(message: string, meta: Record<string, any> = {}): void {
-        logger.logger.warn(message, meta);
-    }
-
-    // Debug
-    static debug(message: string, meta: Record<string, any> = {}): void {
-        logger.logger.debug(message, meta);
-    }
-
-    // Stream (for morgan / HTTP logging)
-    static stream = {
-    write: (message: string) => {
-        const trimmed = message.trim();
-
-        const match = trimmed.match(/\s(\d{3})\s/);
-        const statusCode = match ? parseInt(match[1], 10) : null;
-
-        if (statusCode) {
-            if (statusCode >= 500) {
-                logger.logger.error(trimmed);
-            } else if (statusCode >= 400) {
-                logger.logger.warn(trimmed);
-            } else if (statusCode >= 300) {
-                logger.logger.warn(trimmed); 
-            } else {
-                logger.logger.info(trimmed);
-            }
-        } else {
-            logger.logger.info(trimmed);
-        }
-    }
-};
+  static info(message: string, meta: Record<string, unknown> = {}): void {
+    logger.logger.info(message, redact(meta) as object);
+  }
+  static warn(message: string, meta: Record<string, unknown> = {}): void {
+    logger.logger.warn(message, redact(meta) as object);
+  }
+  static debug(message: string, meta: Record<string, unknown> = {}): void {
+    logger.logger.debug(message, redact(meta) as object);
+  }
+  static error(message: string | Error, meta?: unknown): void {
+    logger.logger.error(message instanceof Error ? message.message : message,
+      { error: redact(message instanceof Error ? message : meta) });
+  }
+  static stream = {
+    write(message: string): void {
+      const status = Number(message.match(/\s(\d{3})\s/)?.[1]);
+      if (status >= 500) logger.error(message.trim());
+      else if (status >= 300) logger.warn(message.trim());
+      else logger.info(message.trim());
+    },
+  };
 }

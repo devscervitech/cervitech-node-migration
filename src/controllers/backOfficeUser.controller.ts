@@ -48,7 +48,7 @@ class BackOfficeUserController {
 
       sendSuccess(res, toBackofficeUserView(data), 'User created successfully.', 201);
     } catch (err: any) {
-      logger.error('Create User Error', { error: err.message });
+      logger.error('Create User Error', { error: err });
       if (err instanceof BackofficeAdminMutationBusyError) {
         return sendError(res, 409, 'Another back-office account security change is in progress. Retry shortly.');
       }
@@ -77,7 +77,7 @@ class BackOfficeUserController {
         200
       );
     } catch (err: any) {
-      logger.error('Login Error', { error: err.message });
+      logger.error('Login Error', { error: err });
       sendError(res, 401, 'Invalid username or password.');
     }
   }
@@ -95,7 +95,7 @@ class BackOfficeUserController {
       logger.info('User logged out successfully.');
       sendSuccess(res, undefined, 'Logout successful. Token invalidated.', 200);
     } catch (err: any) {
-      logger.error('Logout Error', { error: err.message });
+      logger.error('Logout Error', { error: err });
       sendError(res, 500, 'Failed to logout user.');
     }
   }
@@ -112,7 +112,7 @@ class BackOfficeUserController {
       logger.info('Backoffice password reset request processed.');
       sendSuccess(res, data, data.message, 200);
     } catch (err: any) {
-      logger.error('Forgot Password Error', { error: err.message });
+      logger.error('Forgot Password Error', { error: err });
       sendError(res, 500, 'Unable to process password reset request.');
     }
   }
@@ -131,7 +131,7 @@ class BackOfficeUserController {
       logger.info('Reset OTP verified.', { email });
       sendSuccess(res, data, 'OTP verified successfully.', 200);
     } catch (err: any) {
-      logger.error('Verify Reset OTP Error', { error: err.message });
+      logger.error('Verify Reset OTP Error', { error: err });
       sendError(res, 400, 'Invalid or expired OTP.');
     }
   }
@@ -164,7 +164,7 @@ class BackOfficeUserController {
       logger.info('Password changed successfully.', { userId });
       sendSuccess(res, undefined, 'Password changed successfully.', 200);
     } catch (err: any) {
-      logger.error('Change Password Error', { error: err.message });
+      logger.error('Change Password Error', { error: err });
       sendError(res, 500, 'Failed to change password.');
     }
   }
@@ -182,7 +182,7 @@ class BackOfficeUserController {
       logger.info('Backoffice password reset successful.');
       sendSuccess(res, data, 'Password reset successful.', 200);
     } catch (err: any) {
-      logger.error('Reset Password Error', { error: err.message });
+      logger.error('Reset Password Error', { error: err });
       sendError(res, 400, 'Invalid or expired password reset token.');
     }
   }
@@ -210,7 +210,7 @@ class BackOfficeUserController {
       logger.info('Fetched all backoffice users.');
       return sendSuccess(res, data.map(toBackofficeUserView), 'Users retrieved successfully.', 200);
     } catch (err: any) {
-      logger.error('Get Users Error', { error: err.message });
+      logger.error('Get Users Error', { error: err });
       return sendError(res, 500, 'Failed to retrieve users.');
     }
   }
@@ -250,7 +250,7 @@ class BackOfficeUserController {
       logger.info('User deleted successfully.', { id });
       sendSuccess(res, undefined, 'User deleted successfully.', 200);
     } catch (err: any) {
-      logger.error('Delete User Error', { error: err.message });
+      logger.error('Delete User Error', { error: err });
       sendError(res, 500, 'Failed to delete user.');
     }
   }
@@ -275,7 +275,7 @@ class BackOfficeUserController {
       logger.info('User updated successfully.', { id });
       sendSuccess(res, toBackofficeUserView(data), 'User updated successfully.', 200);
     } catch (err: any) {
-      logger.error('Update User Error', { error: err.message });
+      logger.error('Update User Error', { error: err });
       sendError(res, 500, 'Failed to update user.');
     }
   }
@@ -316,7 +316,7 @@ class BackOfficeUserController {
       logger.info('BackOffice access metadata updated.', { actorId, targetId: id });
       return sendSuccess(res, toBackofficeUserView(result.user), 'Access metadata updated.', 200);
     } catch (err: any) {
-      logger.error('Update BackOffice Access Error', { error: err.message });
+      logger.error('Update BackOffice Access Error', { error: err });
       return sendError(res, 500, 'Failed to update access metadata.');
     }
   }
@@ -334,7 +334,7 @@ class BackOfficeUserController {
       logger.info('TestUserById: user retrieved successfully.', { id });
       sendSuccess(res, toBackofficeUserView(user), 'User retrieved successfully.', 200);
     } catch (err: any) {
-      logger.error('Test User Error', { error: err.message });
+      logger.error('Test User Error', { error: err });
       sendError(res, 500, 'Failed to retrieve user.');
     }
   }
