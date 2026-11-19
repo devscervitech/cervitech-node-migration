@@ -249,3 +249,11 @@ Google Play payments require `GOOGLE_PLAY_SUBSCRIPTION_IDS`: a comma-separated a
 New goal `dateSet` and compliance `dateOfConcludedCycle` values store the actual instant. Goal cycles, dashboard day/week boundaries, response-rate hourly buckets, and cron schedules use UTC. Calendar weeks start Monday; monthly charts retain a sixth partial week where present.
 
 Do not bulk-subtract one hour from historical timestamps: the old helper depended on the writer's host timezone. Leave existing values unchanged until deployment history and independent creation timestamps identify affected records. For records proven to have been written on UTC hosts by the old helper, a one-hour correction may be appropriate; review associated cycle boundaries and completed reports together before applying a backed-up, audited migration. Other host timezones require reconstructing the actual offset. Never move completed cycles or resend notifications automatically as part of this deployment.
+
+### Token security rollout
+
+`APP_USER_JWT_SECRET`, `BACKOFFICE_JWT_SECRET`, and `GENERAL_TOKEN_SECRET` are required at boot; blank values are rejected. Use independent signing secrets. Reset/deletion tokens issued before audience scoping must be reissued.
+
+Before deploying, pause auth writes and migrate `tokenblacklists`: populate `expiresAt` from each JWT's numeric `exp`, reconcile duplicate tokens while retaining the latest expiry, drop the old `createdAt_1` TTL index, and create unique `{ token: 1 }` and TTL `{ expiresAt: 1 }` (`expireAfterSeconds: 0`) indexes. Retain malformed legacy entries for review rather than deleting them. Verify the indexes before resuming traffic. Schema changes alone do not remove the old TTL index. Tokens already removed by that index cannot be recovered; rotating access-token secrets invalidates those sessions and requires users to sign in again.
+
+Authenticated endpoints return 503 when blacklist/user lookup fails; invalid credentials continue to return 403 (revoked tokens return 401).

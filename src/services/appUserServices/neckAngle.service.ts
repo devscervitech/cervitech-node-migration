@@ -58,7 +58,8 @@ export class NeckAngleService {
           { $push: { neckAngleRecords: neckAngleRecord } }
         );
 
-        const prompt = appUser.prompt ?? NeckAngleService.defaultPrompt;
+        const prompt = Number.isInteger(appUser.prompt) && appUser.prompt > 0
+          ? appUser.prompt : NeckAngleService.defaultPrompt;
         if (prompt > 0 && counter % prompt === 0) {
           const averageNeckAngle = await this.calculateAverageOfLastSetNeckAngles(record.appUserId);
           const notificationPayload: SendAverageNeckAnglePushNotificationViewModel = {
@@ -187,16 +188,10 @@ export class NeckAngleService {
     const sumOfAngles = records.reduce((sum, record) => sum + record.angle, 0);
     let averageAngle =
       Math.round(
-        (sumOfAngles / NeckAngleService.numberOfRecordPostBeforeSendingAverageNeckAngle) * 10
+        (sumOfAngles / records.length) * 10
       ) / 10;
 
     if (isNaN(averageAngle)) averageAngle = 0;
-
-    const user = await AppUser.findById(userId);
-    if (user) {
-      user.responseRate = 100 - (100 * (90 - averageAngle)) / 90;
-      await user.save();
-    }
 
     return averageAngle;
   }
@@ -490,10 +485,13 @@ export class NeckAngleService {
       const currentDayAverageNeckAngleTextReport =
         Utils.currentDayAverageNeckAngleTextReport(currentDayAverageNeckAngle);
 
+      const responseEntries = await ResponseRate.find({ appUserId: userId });
+      const prompts = responseEntries.reduce((sum: number, row: any) => sum + (row.prompt || 0), 0);
+      const responses = responseEntries.reduce((sum: number, row: any) => sum + (row.response || 0), 0);
       return {
         username: userDetails.username,
         averageNeckAngleStarRatingOver5,
-        responseRate: Math.round((userDetails.responseRate ?? 0) * 10) / 10,
+        responseRate: prompts > 0 ? Math.round(responses / prompts * 1000) / 10 : 0,
         lastSetGoalWithDetails,
         dailyNeckAngleRecords: thisDay,
         weeklyNeckAngleRecords: thisWeek,

@@ -1,4 +1,5 @@
 import { startOfDayUtc, endOfDayUtc } from '../goalCycle';
+import { computeCompliance } from '../goalCycle';
 import AppUser, { IAppUser } from '../../models/AppUser';
 import ResponseRate from '../../models/ResponseRate';
 import { PictureUrlUpdateViewModel } from '../../viewmodels/PictureUrlUpdateViewModel';
@@ -210,14 +211,12 @@ export class AppUserService {
 
   static async postResponseRateAsync(userId: string): Promise<boolean> {
     try {
-      const responseRate = await ResponseRate.findOne({ userId });
-
-      if (responseRate) {
-        responseRate.response = 1;
-        await responseRate.save();
-      }
-
-      return true;
+      const responseRate = await ResponseRate.findOneAndUpdate(
+        { appUserId: userId, prompt: { $gt: 0 } },
+        { $set: { response: 1 } },
+        { sort: { dateCreated: -1, _id: -1 }, new: true }
+      );
+      return responseRate !== null;
     } catch (error: any) {
       logger.error(error.message || 'Unhandled exception in postResponseRate');
       throw error;
@@ -314,10 +313,7 @@ export class AppUserService {
       const goal = await Goal.findById(goalId);
       if (!goal) return false;
 
-      const compliance =
-        average >= goal.targetedAverageNeckAngle
-          ? 100
-          : Math.min(100, Math.round((average / goal.targetedAverageNeckAngle) * 1000) / 10);
+      const compliance = computeCompliance(average, goal.targetedAverageNeckAngle);
 
       const goalCycleReport = new GoalCycleCompletionReport({
         actualAverageNeckAngle: isNaN(average) ? 0 : Math.round(average * 10) / 10,
@@ -348,7 +344,7 @@ export class AppUserService {
 
   static async getFCMTokenById(id: string): Promise<string> {
     try {
-      const user = await AppUser.findOne({ id }).exec();
+      const user = await AppUser.findById(id).exec();
       if (!user) {
         throw new CustomException('User does not exist in our system');
       }
