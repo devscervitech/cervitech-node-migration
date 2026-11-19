@@ -1,3 +1,4 @@
+import { startOfDayUtc, endOfDayUtc, startOfWeekUtc, endOfWeekUtc } from '../goalCycle';
 import { Types } from 'mongoose';
 import { NeckAngleModel } from '../../models/NeckAngle';
 import { NeckAngleRecordModel } from '../../models/NeckAngleRecord';
@@ -84,71 +85,23 @@ export class NeckAngleService {
     aMonthAngleRecords: AbbreviatedNeckAngleRecordViewModel[]
   ): Promise<WeeklyAngleDataViewModel[]> {
     try {
-      let weekOneRecords = 0,
-        weekTwoRecords = 0,
-        weekThreeRecords = 0,
-        weekFourRecords = 0,
-        weekFiveRecords = 0;
-
-      let weekOneCount = 0,
-        weekTwoCount = 0,
-        weekThreeCount = 0,
-        weekFourCount = 0,
-        weekFiveCount = 0;
-
+      const buckets = new Map<number, { total: number; count: number }>();
+      let weekCount = 5; // Preserve empty buckets expected by existing clients.
       for (const record of aMonthAngleRecords) {
-        const weekNum = DateLibrary.getWeekNumberOfMonth(record.dateTimeRecorded);
-
-        switch (weekNum) {
-          case 1:
-            weekOneRecords += record.angle;
-            weekOneCount++;
-            break;
-          case 2:
-            weekTwoRecords += record.angle;
-            weekTwoCount++;
-            break;
-          case 3:
-            weekThreeRecords += record.angle;
-            weekThreeCount++;
-            break;
-          case 4:
-            weekFourRecords += record.angle;
-            weekFourCount++;
-            break;
-          case 5:
-            weekFiveRecords += record.angle;
-            weekFiveCount++;
-            break;
-          default:
-            break;
-        }
+        const date = record.dateTimeRecorded;
+        const week = DateLibrary.getWeekNumberOfMonth(date);
+        const monthEnd = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0));
+        weekCount = Math.max(weekCount, DateLibrary.getWeekNumberOfMonth(monthEnd));
+        const bucket = buckets.get(week) ?? { total: 0, count: 0 };
+        bucket.total += record.angle;
+        bucket.count++;
+        buckets.set(week, bucket);
       }
-
-      const averageNeckAngleForEachWeekOfTheMonthWeek: WeeklyAngleDataViewModel[] = [
-        {
-          week: 1,
-          averageNeckAngle: weekOneCount < 1 ? 0 : weekOneRecords / weekOneCount,
-        },
-        {
-          week: 2,
-          averageNeckAngle: weekTwoCount < 1 ? 0 : weekTwoRecords / weekTwoCount,
-        },
-        {
-          week: 3,
-          averageNeckAngle: weekThreeCount < 1 ? 0 : weekThreeRecords / weekThreeCount,
-        },
-        {
-          week: 4,
-          averageNeckAngle: weekFourCount < 1 ? 0 : weekFourRecords / weekFourCount,
-        },
-        {
-          week: 5,
-          averageNeckAngle: weekFiveCount < 1 ? 0 : weekFiveRecords / weekFiveCount,
-        },
-      ];
-
-      return averageNeckAngleForEachWeekOfTheMonthWeek;
+      return Array.from({ length: weekCount }, (_, index) => {
+        const week = index + 1;
+        const bucket = buckets.get(week);
+        return { week, averageNeckAngle: bucket ? bucket.total / bucket.count : 0 };
+      });
     } catch (error: any) {
       logger.error('Error in getEachWeekOfTheMonthAverageNeckAngle:', error.message);
       throw new CustomException('Error calculating weekly averages.');
@@ -168,7 +121,7 @@ export class NeckAngleService {
       const counts: { [key: number]: number } = {};
 
       for (const record of aYearAngleRecords) {
-        const monthNum = record.dateTimeRecorded.getMonth(); // 0-11
+        const monthNum = record.dateTimeRecorded.getUTCMonth(); // 0-11
         totals[monthNum] = (totals[monthNum] || 0) + record.angle;
         counts[monthNum] = (counts[monthNum] || 0) + 1;
       }
@@ -201,7 +154,7 @@ export class NeckAngleService {
       const counts: { [key: number]: number } = {};
 
       for (const record of aWeekAngleRecords) {
-        const dayNum = record.dateTimeRecorded.getDay(); // 0-6
+        const dayNum = record.dateTimeRecorded.getUTCDay(); // 0-6
         totals[dayNum] = (totals[dayNum] || 0) + record.angle;
         counts[dayNum] = (counts[dayNum] || 0) + 1;
       }
@@ -315,8 +268,8 @@ export class NeckAngleService {
 
   static async getWeeklyChartData(userId: string): Promise<WeeklyChartDataViewModel> {
     const today = new Date();
-    const startOfWeek = DateLibrary.startOfWeek(today);
-    const endOfWeek = DateLibrary.endOfWeek(today);
+    const startOfWeek = startOfWeekUtc(today);
+    const endOfWeek = endOfWeekUtc(today);
 
     const records = await NeckAngleRecordModel.find({
       appUserId: userId,
@@ -328,7 +281,7 @@ export class NeckAngleService {
     const counts: { [key: number]: number } = {};
 
     for (const record of records) {
-      const dayNum = record.dateTimeRecorded.getDay();
+      const dayNum = record.dateTimeRecorded.getUTCDay();
       totals[dayNum] = (totals[dayNum] || 0) + record.angle;
       counts[dayNum] = (counts[dayNum] || 0) + 1;
     }
@@ -347,11 +300,11 @@ export class NeckAngleService {
       if (!userDetails) throw new CustomException('User not found');
 
       const today = new Date();
-      const startOfDay = DateLibrary.startOfDay(today);
-      const endOfDay = DateLibrary.endOfDay(today);
-      const startOfWeek = DateLibrary.startOfWeek(today);
-      const endOfWeek = DateLibrary.endOfWeek(today);
-      const currentMonth = today.getMonth();
+      const startOfDay = startOfDayUtc(today);
+      const endOfDay = endOfDayUtc(today);
+      const startOfWeek = startOfWeekUtc(today);
+      const endOfWeek = endOfWeekUtc(today);
+      const currentMonth = today.getUTCMonth();
       const currentYear = today.getFullYear();
 
       const recordsRaw = await NeckAngleRecordModel.find({ appUserId: userId }).exec();
@@ -373,7 +326,7 @@ export class NeckAngleService {
       );
       const thisMonth = records.filter(
         (r) =>
-          r.dateTimeRecorded.getMonth() === currentMonth &&
+          r.dateTimeRecorded.getUTCMonth() === currentMonth &&
           r.dateTimeRecorded.getFullYear() === currentYear
       );
       const thisYear = records.filter(

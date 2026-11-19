@@ -58,8 +58,10 @@ router.post('/records/batch', authenticateJWT, authorizeRole('APP_USER'), NeckAn
  *         description: Failed to compute statistics
  *       401:
  *         description: Not authenticated
+ *       403:
+ *         description: Authenticated app-user token required
  */
-router.get('/stats', authenticateJWT, NeckAngleController.getUserNeckAngleStatistics);
+router.get('/stats', authenticateJWT, authorizeRole('APP_USER'), NeckAngleController.getUserNeckAngleStatistics);
 
 /**
  * @openapi
@@ -74,10 +76,13 @@ router.get('/stats', authenticateJWT, NeckAngleController.getUserNeckAngleStatis
  *         description: Notification count reset
  *       401:
  *         description: Not authenticated
+ *       403:
+ *         description: Authenticated app-user token required
  */
 router.post(
   '/notification-count/reset',
   authenticateJWT,
+  authorizeRole('APP_USER'),
   NeckAngleController.resetNotificationCount
 );
 
@@ -114,6 +119,7 @@ router.get('/reports/current-day', authenticateJWT, NeckAngleController.getCurre
  * /neck-angle/weekly-averages:
  *   post:
  *     tags: [NeckAngle]
+ *     description: Uses Monday-start UTC calendar weeks, including a sixth partial week when present.
  *     summary: Compute each week-of-month's average neck angle from raw records
  *     requestBody:
  *       required: true
@@ -181,7 +187,9 @@ router.post('/weekly-averages', authenticateJWT, NeckAngleController.getWeeklyNe
  *         description: Failed to compute chart data
  *       401:
  *         description: Not authenticated
+ *       403:
+ *         description: Authenticated app-user token required
  */
-router.get('/weekly-chart', authenticateJWT, NeckAngleController.getWeeklyChartData);
+router.get('/weekly-chart', authenticateJWT, authorizeRole('APP_USER'), NeckAngleController.getWeeklyChartData);
 
 export default router;

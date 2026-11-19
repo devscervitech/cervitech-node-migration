@@ -101,5 +101,5 @@ export const startPushReceiptsJob = () => {
     } catch (err: any) {
       logger.error(`Error in push receipts job: ${err.message}`);
     }
-  });
+  }, { timezone: 'UTC' });
 };

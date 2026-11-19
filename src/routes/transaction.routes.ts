@@ -1,6 +1,6 @@
 import express from 'express';
 import { TransactionController } from '../controllers/transaction.controller';
-import { authenticateJWT } from '../middlewares/auth.middleware';
+import { authenticateJWT, authorizeRole } from '../middlewares/auth.middleware';
 
 const router = express.Router();
 
@@ -18,10 +18,12 @@ const router = express.Router();
  *         description: Records found
  *       401:
  *         description: Not authenticated
+ *       403:
+ *         description: Authenticated app-user token required
  *       404:
  *         description: No transaction records found for this user
  */
-router.get('/', authenticateJWT, TransactionController.getTransactionRecordsByUserId);
+router.get('/', authenticateJWT, authorizeRole('APP_USER'), TransactionController.getTransactionRecordsByUserId);
 
 /**
  * @openapi
@@ -44,10 +46,12 @@ router.get('/', authenticateJWT, TransactionController.getTransactionRecordsByUs
  *         description: Invalid transaction ID
  *       401:
  *         description: Not authenticated
+ *       403:
+ *         description: Authenticated app-user token required
  *       404:
  *         description: Transaction record not found
  */
-router.get('/:id', authenticateJWT, TransactionController.getTransactionRecordById);
+router.get('/:id', authenticateJWT, authorizeRole('APP_USER'), TransactionController.getTransactionRecordById);
 
 /**
  * @openapi
@@ -76,7 +80,9 @@ router.get('/:id', authenticateJWT, TransactionController.getTransactionRecordBy
  *           Play purchase) the purchase token could not be verified
  *       401:
  *         description: Not authenticated
+ *       403:
+ *         description: Authenticated app-user token required
  */
-router.post('/', authenticateJWT, TransactionController.createTransactionRecord);
+router.post('/', authenticateJWT, authorizeRole('APP_USER'), TransactionController.createTransactionRecord);
 
 export default router;

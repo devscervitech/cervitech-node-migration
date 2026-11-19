@@ -3,7 +3,6 @@ import { Goal } from '../models/Goal';
 import { SetGoalViewModel, TurnOnGoalViewModel } from '../types/goal.types';
 import { GoalCycleReportViewModel } from '../types/goalCycleReport.types';
 import { CustomException } from '../utils/customException';
-import { DateLibrary } from '../utils/dateLibrary';
 import { Utils } from '../utils/utils';
 import { logger } from '../utils/logger';
 import { GoalCycleCompletionReport } from '../models/GoalCycleCompletionReport';
@@ -42,14 +41,15 @@ export class GoalService {
         })
       );
 
+      const now = new Date();
       const goal = new Goal({
         appUserId,
         targetedAverageNeckAngle: model.targetedAverageNeckAngle,
         frequency: model.frequency,
-        dateSet: DateLibrary.getCurrentDateTime(),
+        dateSet: now,
         goalCycleCompletionReports: reports,
         nextCycleEndsAt: isSupportedFrequency(model.frequency)
-          ? computeFirstCycleEndsAt(DateLibrary.getCurrentDateTime(), model.frequency)
+          ? computeFirstCycleEndsAt(now, model.frequency)
           : undefined,
       });
       const savedGoal = await goal.save();
@@ -97,26 +97,26 @@ export class GoalService {
     appUserId: string,
   ): Promise<GoalCycleReportViewModel[]> {
     try {
-      const goals = await Goal.findOne({ appUserId }).sort({ dateSet: -1 }).exec();
-      if (!goals || !goals.goalCycleCompletionReports || goals.goalCycleCompletionReports.length === 0) {
-        return [];
-      }
+      const goals = await Goal.find({ appUserId }).sort({ dateSet: -1 }).exec();
+      if (!goals.length) return [];
 
       const reports: GoalCycleReportViewModel[] = [];
 
       let counter = 1;
-      for (const report of goals.goalCycleCompletionReports) {
-        reports.push({
-          id: counter++,
-          appUserId: goals.appUserId,
-          frequency: goals.frequency,
-          targetedAverageNeckAngle: goals.targetedAverageNeckAngle,
-          actualAverageNeckAngle: Math.round(report.actualAverageNeckAngle * 10) / 10,
-          complianceInPercentage: Math.round(report.complianceInPercentage * 10) / 10,
-          dateOfConcludedCycle: report.dateOfConcludedCycle,
-          dayOfConcludedCycle: report.dayOfConcludedCycle,
-          colorTag: Utils.getColorTag(report.complianceInPercentage),
-        });
+      for (const goal of goals) {
+        for (const report of goal.goalCycleCompletionReports) {
+          reports.push({
+            id: counter++,
+            appUserId: goal.appUserId,
+            frequency: goal.frequency,
+            targetedAverageNeckAngle: goal.targetedAverageNeckAngle,
+            actualAverageNeckAngle: Math.round(report.actualAverageNeckAngle * 10) / 10,
+            complianceInPercentage: Math.round(report.complianceInPercentage * 10) / 10,
+            dateOfConcludedCycle: report.dateOfConcludedCycle,
+            dayOfConcludedCycle: report.dayOfConcludedCycle,
+            colorTag: Utils.getColorTag(report.complianceInPercentage),
+          });
+        }
       }
 
       return reports;

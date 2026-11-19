@@ -13,7 +13,10 @@
     "prod": "dotenv -e .env.prod -- tsx watch src/server.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:file": "vitest run"
+    "test:file": "vitest run",
+    "audit:backoffice-passwords": "tsx scripts/audit-backoffice-passwords.ts",
+    "migrate:backoffice-access-levels": "tsx scripts/migrate-backoffice-access-levels.ts",
+    "bootstrap:backoffice-admin": "tsx scripts/bootstrap-backoffice-admin.ts"
   },
   "repository": "https://github.com/Vhickjr/cervitech-node-migration.git",
   "author": "CerviTech",

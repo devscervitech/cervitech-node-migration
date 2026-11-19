@@ -21,7 +21,7 @@ it('rejects a token for another purpose',()=>{
 it('preserves database failures',async()=>{
  const {default:User}=await import('../../src/models/AppUser');
  const failure=new Error('database unavailable');
- vi.mocked(User.findById).mockRejectedValueOnce(failure);
+ vi.mocked(User.findById).mockReturnValueOnce({select:()=>({lean:()=>Promise.reject(failure)})} as any);
  const token=jwt.sign({userId:'user',role:'APP_USER'},'test-app-secret');
  await expect(TokenUtil.verifyUserToken(token)).rejects.toBe(failure);
 });

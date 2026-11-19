@@ -20,6 +20,7 @@ import { startPushReminderJobs } from './jobs/pushReminders.job';
 import { startGoalCycleSummaryJob } from './jobs/goalCycleSummary.job';
 import { startPushReceiptsJob } from './jobs/pushReceipts.job';
 import healthRoutes from './routes/health.routes';
+import AuthRateLimitBucket from './models/AuthRateLimitBucket';
 
 // Load environment variables
 dotenv.config();
@@ -28,6 +29,11 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/cervitechdb';
 const frontendUrl = process.env.FRONTEND_URL;
+const trustProxyHops = process.env.TRUST_PROXY_HOPS ?? '0';
+if (!/^(0|[1-9]\d*)$/.test(trustProxyHops) || !Number.isSafeInteger(Number(trustProxyHops))) {
+  throw new Error('TRUST_PROXY_HOPS must be a non-negative integer.');
+}
+app.set('trust proxy', Number(trustProxyHops));
 
 // Middleware
 app.use(bodyParser.json());
@@ -67,7 +73,8 @@ mongoose
     dbName: 'cervitechdb', // 👈 force your app to use "cervitech" database
   })
 
-  .then(() => {
+  .then(async () => {
+    await AuthRateLimitBucket.init();
     logger.info('MongoDB connected');
     app.listen(PORT, () => {
       logger.info(`Server running on port ${PORT}`);
