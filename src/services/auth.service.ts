@@ -30,20 +30,32 @@ import { EmailUtils } from '../utils/EmailService/emailutils.js';
 import { AuthValidation } from '../validation/authValidation.js';
 import { Goal } from '../models/Goal.js';
 import { toAppUserViewModel } from '../viewmodels/AppUser.viewmodel.js';
+import { normalizePassword, verifyPasswordInput } from '../utils/password.util.js';
+import { passwordPolicySchema } from '../validation/schemas/auth.schema.js';
+
+function formatValidationError(error: { details: Array<{ message: string }> }): string {
+  return error.details.map(({ message }) => message.replace(/\"/g, '')).join('; ');
+}
+
+function escapeRegExpLiteral(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+type ChangePasswordResult =
+  | { success: true; message: string }
+  | { success: false; message: string; code?: 'INVALID_NEW_PASSWORD' };
 
 export class AuthService {
   static async signup(data: SignupRequest): Promise<SignupResponse> {
-    console.log('Data', data);
-
-    const validationError = AuthValidation.signupValidation(data);
-    if (validationError) {
+    const validation = AuthValidation.signupValidation(data);
+    if (!validation.valid) {
       return {
         success: false,
-        message: validationError,
+        message: validation.error,
       };
     }
 
-    const { password, confirmPassword, ...userData } = data;
+    const { password, confirmPassword, ...userData } = validation.value;
     const existing = await AppUser.findOne({ email: userData.email });
     if (existing) {
       return {
@@ -52,7 +64,11 @@ export class AuthService {
       };
     }
 
-    const hashedPassword = await HashUtil.hash(password);
+    const normalizedPassword = normalizePassword(password);
+    if (!normalizedPassword) {
+      return { success: false, message: 'Password cannot be empty' };
+    }
+    const hashedPassword = await HashUtil.hash(normalizedPassword);
     const email = userData.email.toLowerCase().trim();
 
     try {
@@ -113,7 +129,11 @@ export class AuthService {
     }
   }
 
-  static async changePassword(userId: string, formerPassword: string, newPassword: string) {
+  static async changePassword(
+    userId: string,
+    formerPassword: string,
+    newPassword: string
+  ): Promise<ChangePasswordResult> {
     const user = await AppUser.findById(userId);
 
     if (!user) {
@@ -121,12 +141,20 @@ export class AuthService {
     }
 
     const password = user.password;
-    const same = await HashUtil.compare(formerPassword, password);
+    const same = await verifyPasswordInput(formerPassword, password);
 
-    if (!same) {
+    if (!same.isValid) {
       return { success: false, message: 'Incorrect former password, Try again or RESET password' };
     }
-    const newPassHash = await HashUtil.hash(newPassword);
+    const passwordValidation = passwordPolicySchema.validate(newPassword, { abortEarly: false });
+    if (passwordValidation.error) {
+      return {
+        success: false,
+        code: 'INVALID_NEW_PASSWORD',
+        message: formatValidationError(passwordValidation.error),
+      };
+    }
+    const newPassHash = await HashUtil.hash(passwordValidation.value);
 
     await AppUser.findByIdAndUpdate(userId, { password: newPassHash });
 
@@ -167,7 +195,10 @@ export class AuthService {
 
     const { userId } = TokenUtil.verifyToken(token, 'password_reset');
 
-    const hashed = await HashUtil.hash(newPassword);
+    const passwordValidation = passwordPolicySchema.validate(newPassword, { abortEarly: false });
+    if (passwordValidation.error) throw new Error(formatValidationError(passwordValidation.error));
+
+    const hashed = await HashUtil.hash(passwordValidation.value);
     const updated = await AppUser.findByIdAndUpdate(userId, { password: hashed });
     if (!updated) throw new Error('User not found');
 
@@ -177,15 +208,15 @@ export class AuthService {
   }
 
   static async authenticatev1(model: LoginRequest): Promise<LoginResponseResult> {
-    const { emailOrUsername, password, mobileChannel } = model;
-
-    const validationError = AuthValidation.loginValidation(model);
-    if (validationError) {
+    const validation = AuthValidation.loginValidation(model);
+    if (!validation.valid) {
       return {
         success: false,
-        message: validationError,
+        message: validation.error,
       };
     }
+
+    const { emailOrUsername, password, mobileChannel } = validation.value;
 
     const user = await AppUser.findOne({
       $or: [{ email: emailOrUsername }, { username: emailOrUsername }],
@@ -205,12 +236,16 @@ export class AuthService {
       };
     }
 
-    const isValidPassword = await HashUtil.compare(password, user.password);
-    if (!isValidPassword) {
+    const passwordCheck = await verifyPasswordInput(password, user.password, model.password);
+    if (!passwordCheck.isValid) {
       return {
         success: false,
         message: 'An incorrect password provided. Please check password and try again.',
       };
+    }
+
+    if (passwordCheck.needsRehash) {
+      user.password = await HashUtil.hash(passwordCheck.normalizedPassword);
     }
 
     user.lastLoginDateTime = new Date();
@@ -278,9 +313,10 @@ export class AuthService {
   }
 
   static async usernameAlreadyExists(username: string): Promise<boolean> {
+    if (typeof username !== 'string') throw new TypeError('Username must be a string');
     const normalizedUsername = username.toLowerCase().trim();
     const exists = await AppUser.exists({
-      username: { $regex: new RegExp(`^${normalizedUsername}$`, 'i') },
+      username: { $regex: new RegExp(`^${escapeRegExpLiteral(normalizedUsername)}$`, 'i') },
     });
     return !!exists;
   }
