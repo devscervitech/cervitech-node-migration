@@ -1,3 +1,4 @@
+import { startOfDayUtc, endOfDayUtc } from '../goalCycle';
 import { computeCompliance } from '../goalCycle';
 import AppUser, { IAppUser } from '../../models/AppUser';
 import ResponseRate from '../../models/ResponseRate';
@@ -221,11 +222,9 @@ export class AppUserService {
 
   static async getResponseRateAsync(userId: string, day: Date): Promise<ResponseRateViewModel> {
     try {
-      const startOfDay = new Date(day);
-      startOfDay.setHours(0, 0, 0, 0);
+      const startOfDay = startOfDayUtc(day);
 
-      const endOfDay = new Date(day);
-      endOfDay.setHours(23, 59, 59, 999);
+      const endOfDay = endOfDayUtc(day);
       const responseRates = await ResponseRate.find({
         appUserId: userId,
         dateCreated: { $gte: startOfDay, $lte: endOfDay },
@@ -237,7 +236,7 @@ export class AppUserService {
 
       const groupedByHour: Record<number, { prompts: number; responses: number }> = {};
       responseRates.forEach((entry) => {
-        const hour = new Date(entry.dateCreated).getHours();
+        const hour = new Date(entry.dateCreated).getUTCHours();
         if (!groupedByHour[hour]) {
           groupedByHour[hour] = { prompts: 0, responses: 0 };
         }
@@ -281,7 +280,7 @@ export class AppUserService {
           appUserId: userId,
           dateTimeRecorded: {
             $gte: DateLibrary.getYesterdayDateTime(),
-            $lte: DateLibrary.getCurrentDateTime(),
+            $lte: new Date(),
           },
         });
       } else if (frequency === 'WEEKLY') {
@@ -289,7 +288,7 @@ export class AppUserService {
           appUserId: userId,
           dateTimeRecorded: {
             $gte: DateLibrary.getLastWeekDateTime(),
-            $lte: DateLibrary.getCurrentDateTime(),
+            $lte: new Date(),
           },
         });
       } else {
@@ -307,7 +306,7 @@ export class AppUserService {
       const goalCycleReport = new GoalCycleCompletionReport({
         actualAverageNeckAngle: isNaN(average) ? 0 : Math.round(average * 10) / 10,
         complianceInPercentage: isNaN(compliance) ? 0 : compliance,
-        dateOfConcludedCycle: DateLibrary.getCurrentDateTime(),
+        dateOfConcludedCycle: new Date(),
         goalId,
       });
 

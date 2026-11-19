@@ -76,7 +76,7 @@ export const startGoalReminderJob = () => {
     } catch (err: any) {
       logger.error(`Error in goal reminder job: ${err.message}`);
     }
-  });
+  }, { timezone: 'UTC' });
 };
 
 /**
@@ -139,7 +139,7 @@ export const startCheckInReminderJob = () => {
     } catch (err: any) {
       logger.error(`Error in check-in reminder job: ${err.message}`);
     }
-  });
+  }, { timezone: 'UTC' });
 };
 
 /**
@@ -217,7 +217,7 @@ export const startGoalProgressJob = () => {
     } catch (err: any) {
       logger.error(`Error in goal-progress job: ${err.message}`);
     }
-  });
+  }, { timezone: 'UTC' });
 };
 
 /**
@@ -278,7 +278,7 @@ export const startBadPostureAlertJob = () => {
     } catch (err: any) {
       logger.error(`Error in bad-posture alert job: ${err.message}`);
     }
-  });
+  }, { timezone: 'UTC' });
 };
 
 export const startPushReminderJobs = () => {

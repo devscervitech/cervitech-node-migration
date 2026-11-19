@@ -3,7 +3,6 @@ import { Goal } from '../models/Goal';
 import { SetGoalViewModel, TurnOnGoalViewModel } from '../types/goal.types';
 import { GoalCycleReportViewModel } from '../types/goalCycleReport.types';
 import { CustomException } from '../utils/customException';
-import { DateLibrary } from '../utils/dateLibrary';
 import { Utils } from '../utils/utils';
 import { PushNotificationDriver } from './pushNotificationDriver';
 import { CronJob } from 'cron';
@@ -47,14 +46,15 @@ export class GoalService {
         })
       );
 
+      const now = new Date();
       const goal = new Goal({
         appUserId,
         targetedAverageNeckAngle: model.targetedAverageNeckAngle,
         frequency: model.frequency,
-        dateSet: DateLibrary.getCurrentDateTime(),
+        dateSet: now,
         goalCycleCompletionReports: reports,
         nextCycleEndsAt: isSupportedFrequency(model.frequency)
-          ? computeFirstCycleEndsAt(DateLibrary.getCurrentDateTime(), model.frequency)
+          ? computeFirstCycleEndsAt(now, model.frequency)
           : undefined,
       });
       const savedGoal = await goal.save();
