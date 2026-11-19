@@ -16,7 +16,6 @@ interface FCMTokenUpdateViewModel {
 
 export const updateFCMToken = async (req: Request, res: Response): Promise<void> => {
   const updateViewModel: FCMTokenUpdateViewModel = req.body;
-  logger.info(`FCMTokenUpdateViewModel: ${JSON.stringify(updateViewModel)}`);
 
   const responses = getApiResponseMessages();
 
@@ -43,7 +42,7 @@ export const updateFCMToken = async (req: Request, res: Response): Promise<void>
       });
     } catch (ex: unknown) {
       const error = ex instanceof Error ? ex : new Error('Custom error');
-      logger.error(error.message);
+      logger.error(error);
 
       res.status(500).json({
         statusCode: responses[ApiResponseStatus.Failed],
@@ -53,7 +52,7 @@ export const updateFCMToken = async (req: Request, res: Response): Promise<void>
     }
   } catch (ex: unknown) {
     const error = ex instanceof Error ? ex : new Error('Unexpected error');
-    logger.error(error.message);
+    logger.error(error);
 
     res.status(500).json({
       statusCode: responses[ApiResponseStatus.UnknownError],

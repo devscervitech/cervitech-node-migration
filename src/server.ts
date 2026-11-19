@@ -81,7 +81,6 @@ mongoose
     logger.info('MongoDB connected');
     app.listen(PORT, () => {
       logger.info(`Server running on port ${PORT}`);
-      console.log(frontendUrl);
     });
     startMonthlyReminderJob();
     startSubscriptionSyncJob();

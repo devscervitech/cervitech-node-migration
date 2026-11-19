@@ -25,7 +25,7 @@ export class FCMTokenService {
       return toAppUserViewModel(user);
     } catch (ex: unknown) {
       const error = ex instanceof Error ? ex : new Error('Unhandled exception');
-      logger.error(error.message);
+      logger.error(error);
       throw error;
     }
   }
