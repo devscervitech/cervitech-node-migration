@@ -108,6 +108,13 @@ export class GoalController {
     try {
       const result = await GoalService.getAllGoalsByIdAsync(appUserId);
 
+      // An empty history is a normal, successful state — a new user, or
+      // anyone whose first goal cycle hasn't concluded yet, has zero
+      // reports. That's not a 404: the resource (this user's goal history)
+      // exists and was found; it's just empty. Returning 404 here meant
+      // the mobile app's error handling kicked in (an "Unable to load your
+      // goals" toast) for what should have been a quiet empty-state screen
+      // — for most users, every single time they opened it.
       res.status(200).json({
         success: true,
         data: result ?? [],
