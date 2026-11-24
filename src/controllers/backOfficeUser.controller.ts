@@ -5,6 +5,7 @@ import backofficeUserService, {
 import { logger } from '../utils/logger';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
 import { sendSuccess, sendError } from '../utils/apiResponse';
+import { singleString } from '../utils/compat.util';
 import type { IBackofficeUser } from '../models/BackOfficeUser';
 import type { backOfficeUserModel } from '../types/backOfficeUserModel.types';
 import { validateBackofficeInput } from '../validation/backOfficeUserValidation';
@@ -217,10 +218,10 @@ class BackOfficeUserController {
 
   static async deleteUser(req: AuthenticatedRequest, res: Response) {
     try {
-      const { id } = req.params;
+      const id = singleString(req.params.id);
       const actorId = req.user?.userId;
       if (!actorId) return sendError(res, 401, 'Unauthorized. Please log in.');
-      if (!mongoose.isValidObjectId(id)) return sendError(res, 400, 'Invalid user ID.');
+      if (!id || !mongoose.isValidObjectId(id)) return sendError(res, 400, 'Invalid user ID.');
 
       const result = await backofficeUserService.deleteById(id, actorId);
 
@@ -257,7 +258,7 @@ class BackOfficeUserController {
 
   static async updateUser(req: Request, res: Response) {
     try {
-      const id = req.params.id;
+      const id = singleString(req.params.id);
 
       if (!id || !mongoose.isValidObjectId(id)) return sendError(res, 400, 'Valid user ID is required.');
 
@@ -281,7 +282,7 @@ class BackOfficeUserController {
   }
 
   static async updateAccess(req: AuthenticatedRequest, res: Response) {
-    const id = req.params.id;
+    const id = singleString(req.params.id);
     const actorId = req.user?.userId;
     if (!actorId) return sendError(res, 401, 'Unauthorized. Please log in.');
     if (!id || !mongoose.isValidObjectId(id)) return sendError(res, 400, 'Valid user ID is required.');
@@ -323,7 +324,9 @@ class BackOfficeUserController {
 
   static async testUserById(req: Request, res: Response) {
     try {
-      const { id } = req.params;
+      const id = singleString(req.params.id);
+      if (!id || !mongoose.isValidObjectId(id)) return sendError(res, 400, 'Valid user ID is required.');
+
       const user = await backofficeUserService.getById(id);
 
       if (!user) {
