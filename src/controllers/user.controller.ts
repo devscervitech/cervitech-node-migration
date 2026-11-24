@@ -11,6 +11,7 @@ import { AuthenticatedRequest } from '../middlewares/auth.middleware';
 import TokenBlacklist from '../models/TokenBlacklist';
 import { CustomException } from '../utils/customException';
 import { sendSuccess, sendError } from '../utils/apiResponse';
+import { singleString } from '../utils/compat.util';
 
 export class UserController {
   // -------------------------
@@ -45,7 +46,7 @@ export class UserController {
   // Delete user by ID
   // -------------------------
   static async deleteById(req: Request, res: Response): Promise<void> {
-    const id = req.params.id ?? req.query.id;
+    const id = singleString(req.params.id) ?? singleString(req.query.id);
     if (!id) {
       sendError(res, 400, 'User ID is required.');
       return;

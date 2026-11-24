@@ -5,6 +5,7 @@ import { TransactionViewModel } from '../types/transaction.types';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
 import { CustomException } from '../utils/customException';
 import { TransactionError } from '../utils/transactionError';
+import { singleString } from '../utils/compat.util';
 
 export class TransactionController {
   static async createTransactionRecord(req: AuthenticatedRequest, res: Response): Promise<void> {
@@ -79,7 +80,7 @@ export class TransactionController {
       return;
     }
 
-    const { id } = req.params;
+    const id = singleString(req.params.id);
 
     if (!id) {
       res.status(400).json({ error: 'Transaction ID is required.' });
