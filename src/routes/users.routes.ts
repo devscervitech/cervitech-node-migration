@@ -1,7 +1,12 @@
 // src/routes/users.routes.ts
 import { Router } from 'express';
 import { UserController } from '../controllers/user.controller';
-import { authenticateJWT, authorizeRole } from '../middlewares/auth.middleware';
+import {
+  authenticateJWT,
+  authorizeRole,
+  requireAccessLevel,
+  requireWritable,
+} from '../middlewares/auth.middleware';
 
 const router = Router();
 
@@ -14,7 +19,7 @@ const router = Router();
  * /users:
  *   get:
  *     tags: [User]
- *     summary: Get a user by email
+ *     summary: "[Back office] Get a user by email"
  *     parameters:
  *       - in: query
  *         name: email
@@ -22,7 +27,13 @@ const router = Router();
  *         schema:
  *           type: string
  *           format: email
+ *     security:
+ *       - bearerAuth: []
  *     responses:
+ *       401:
+ *         description: Not authenticated
+ *       403:
+ *         description: Account role not permitted
  *       200:
  *         description: User found
  *       400:
@@ -30,14 +41,15 @@ const router = Router();
  *       404:
  *         description: User not found
  */
-router.get('/', UserController.getByEmail);
+router.get('/', authenticateJWT, authorizeRole('BACKOFFICE_USER'), UserController.getByEmail);
 
 /**
  * @openapi
  * /users/response-rate:
  *   get:
  *     tags: [User]
- *     summary: Get a user's response rate for a given date
+ *     description: Day boundaries and hourly buckets use UTC.
+ *     summary: "[Back office] Get a user's response rate for a given date"
  *     parameters:
  *       - in: query
  *         name: id
@@ -50,7 +62,13 @@ router.get('/', UserController.getByEmail);
  *         schema:
  *           type: string
  *           format: date
+ *     security:
+ *       - bearerAuth: []
  *     responses:
+ *       401:
+ *         description: Not authenticated
+ *       403:
+ *         description: Account role not permitted
  *       200:
  *         description: Response rate computed
  *         content:
@@ -64,53 +82,29 @@ router.get('/', UserController.getByEmail);
  *             schema:
  *               $ref: '#/components/schemas/ApiErrorResponse'
  */
-router.get('/response-rate', UserController.getResponseRate);
+router.get('/response-rate', authenticateJWT, authorizeRole('BACKOFFICE_USER'), UserController.getResponseRate);
 
-/**
- * @openapi
- * /users/fcm-token:
- *   get:
- *     tags: [User]
- *     summary: Get a user's FCM token by username
- *     parameters:
- *       - in: query
- *         name: username
- *         required: true
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: Token found
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                 data:
- *                   type: object
- *                   properties:
- *                     fcmToken:
- *                       type: string
- *       404:
- *         description: User not found
- */
-router.get('/fcm-token', UserController.getFCMTokenByUsername);
+
 
 /**
  * @openapi
  * /users/{id}:
  *   get:
  *     tags: [User]
- *     summary: Get a user profile by ID
+ *     summary: "[Back office] Get a user profile by ID"
  *     parameters:
  *       - in: path
  *         name: id
  *         required: true
  *         schema:
  *           type: string
+ *     security:
+ *       - bearerAuth: []
  *     responses:
+ *       401:
+ *         description: Not authenticated
+ *       403:
+ *         description: Account role not permitted
  *       200:
  *         description: User found
  *       400:
@@ -118,7 +112,7 @@ router.get('/fcm-token', UserController.getFCMTokenByUsername);
  *       404:
  *         description: User not found
  */
-router.get('/:id', UserController.fetch_user_profile);
+router.get('/:id', authenticateJWT, authorizeRole('BACKOFFICE_USER'), UserController.fetch_user_profile);
 
 // -------------------------
 // Back office (admin)
@@ -145,6 +139,12 @@ router.get('/:id', UserController.fetch_user_profile);
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ApiSuccessResponse'
+ *       400:
+ *         description: User ID missing
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
  *       401:
  *         description: Not authenticated
  *         content:
@@ -152,7 +152,7 @@ router.get('/:id', UserController.fetch_user_profile);
  *             schema:
  *               $ref: '#/components/schemas/ApiErrorResponse'
  *       403:
- *         description: Authenticated, but not a back-office user
+ *         description: Administrator privileges required or account is read-only
  *         content:
  *           application/json:
  *             schema:
@@ -164,7 +164,14 @@ router.get('/:id', UserController.fetch_user_profile);
  *             schema:
  *               $ref: '#/components/schemas/ApiErrorResponse'
  */
-router.delete('/:id', authenticateJWT, authorizeRole('BACKOFFICE_USER'), UserController.deleteById);
+router.delete(
+  '/:id',
+  authenticateJWT,
+  authorizeRole('BACKOFFICE_USER'),
+  requireAccessLevel('ADMIN'),
+  requireWritable,
+  UserController.deleteById
+);
 
 // -------------------------
 // Authenticated self-service ("me")
@@ -209,8 +216,14 @@ router.delete('/:id', authenticateJWT, authorizeRole('BACKOFFICE_USER'), UserCon
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       403:
+ *         description: Authenticated app-user token required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
  */
-router.put('/me', authenticateJWT, UserController.updateUser);
+router.put('/me', authenticateJWT, authorizeRole('APP_USER'), UserController.updateUser);
 
 /**
  * @openapi
@@ -246,8 +259,10 @@ router.put('/me', authenticateJWT, UserController.updateUser);
  *               $ref: '#/components/schemas/ApiErrorResponse'
  *       404:
  *         description: User not found
+ *       403:
+ *         description: Authenticated app-user token required
  */
-router.put('/me/picture', authenticateJWT, UserController.updatePictureUrl);
+router.put('/me/picture', authenticateJWT, authorizeRole('APP_USER'), UserController.updatePictureUrl);
 
 /**
  * @openapi
@@ -262,12 +277,15 @@ router.put('/me/picture', authenticateJWT, UserController.updatePictureUrl);
  *         description: Preference retrieved
  *       401:
  *         description: Not authenticated
+ *       403:
+ *         description: Authenticated app-user token required
  *       404:
  *         description: User not found
  */
 router.get(
   '/me/allow-push-notification',
   authenticateJWT,
+  authorizeRole('APP_USER'),
   UserController.getAllowPushNotificationStatus
 );
 
@@ -292,10 +310,17 @@ router.get(
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       403:
+ *         description: Authenticated app-user token required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
  */
 router.put(
   '/me/toggle-push-notification',
   authenticateJWT,
+  authorizeRole('APP_USER'),
   UserController.toggleAllowPushNotifications
 );
 
@@ -332,8 +357,10 @@ router.put(
  *               $ref: '#/components/schemas/ApiErrorResponse'
  *       401:
  *         description: Not authenticated
+ *       403:
+ *         description: Authenticated app-user token required
  */
-router.put('/me/fcm-token', authenticateJWT, UserController.updateFCMToken);
+router.put('/me/fcm-token', authenticateJWT, authorizeRole('APP_USER'), UserController.updateFCMToken);
 
 /**
  * @openapi
@@ -358,8 +385,10 @@ router.put('/me/fcm-token', authenticateJWT, UserController.updateFCMToken);
  *               $ref: '#/components/schemas/ApiErrorResponse'
  *       404:
  *         description: Account not found
+ *       403:
+ *         description: Authenticated app-user token required
  */
-router.post('/me/deletion-requests', authenticateJWT, UserController.deleteMyAccount);
+router.post('/me/deletion-requests', authenticateJWT, authorizeRole('APP_USER'), UserController.deleteMyAccount);
 
 /**
  * @openapi

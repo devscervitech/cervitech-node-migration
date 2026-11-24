@@ -22,7 +22,7 @@ export interface ITransactionRecord extends Document {
 
 const TransactionRecordSchema = new Schema<ITransactionRecord>({
   appUserId: { type: String, required: true },
-  paymentRef: { type: String, required: true },
+  paymentRef: { type: String, required: true, unique: true },
   amount: { type: Number, required: true },
   status: { type: Number, enum: Object.values(TRANSACTION_STATUS), required: true },
   transDate: { type: Date, required: true, default: Date.now },
@@ -33,11 +33,9 @@ const TransactionRecordSchema = new Schema<ITransactionRecord>({
   purchaseToken: { type: String },
   packageName: { type: String },
   subscriptionId: { type: String },
-  createdOn: { type: Date, default: Date.now },
-  updatedOn: { type: Date, default: Date.now },
   deletedOn: { type: Date },
 },
-{ timestamps: true });
+{ timestamps: { createdAt: 'createdOn', updatedAt: 'updatedOn' } });
 
 const TransactionRecord = mongoose.model<ITransactionRecord>('TransactionRecord', TransactionRecordSchema);
 export default TransactionRecord;

@@ -241,3 +241,25 @@ Used for logging and UI indication of environment status.
 - Never commit `.env` to version control
 - Use strong, unique values for all secrets
 - Rotate secrets regularly in production
+
+Google Play payments require `GOOGLE_PLAY_SUBSCRIPTION_IDS`: a comma-separated allowlist of subscription product IDs. Legacy status-only payment submissions are rejected. Existing duplicate paymentRef records must be reconciled before creating the unique paymentRef index in production.
+
+### Logging and credential exposure response
+
+`LOG_LEVEL` controls Winston verbosity (default `info`). Logs are structured JSON on stdout with recursive credential redaction and exception/rejection handlers. Configure retention, rotation, access controls, and aggregation in the container runtime or log collector; no local log file is maintained.
+
+Remove retained signup payloads, deletion/reset tokens, and user/health records from accessible logs under the incident retention policy. Identify accounts created while plaintext signup logging was deployed using account creation dates and deployment history, without exporting their logged passwords. Require password resets for affected accounts and invalidate affected sessions. Rotate affected signing credentials if signing material was exposed; expired action tokens do not need reissuing. Coordinate account recovery and user notification before production changes. This patch does not rotate account passwords, purge historical logs, or revoke sessions.
+
+### UTC date handling rollout
+
+New goal `dateSet` and compliance `dateOfConcludedCycle` values store the actual instant. Goal cycles, dashboard day/week boundaries, response-rate hourly buckets, and cron schedules use UTC. Calendar weeks start Monday; monthly charts retain a sixth partial week where present.
+
+Do not bulk-subtract one hour from historical timestamps: the old helper depended on the writer's host timezone. Leave existing values unchanged until deployment history and independent creation timestamps identify affected records. For records proven to have been written on UTC hosts by the old helper, a one-hour correction may be appropriate; review associated cycle boundaries and completed reports together before applying a backed-up, audited migration. Other host timezones require reconstructing the actual offset. Never move completed cycles or resend notifications automatically as part of this deployment.
+
+### Token security rollout
+
+`APP_USER_JWT_SECRET`, `BACKOFFICE_JWT_SECRET`, and `GENERAL_TOKEN_SECRET` are required at boot; blank values are rejected. Use independent signing secrets. Reset/deletion tokens issued before audience scoping must be reissued.
+
+Before deploying, pause auth writes and migrate `tokenblacklists`: populate `expiresAt` from each JWT's numeric `exp`, reconcile duplicate tokens while retaining the latest expiry, drop the old `createdAt_1` TTL index, and create unique `{ token: 1 }` and TTL `{ expiresAt: 1 }` (`expireAfterSeconds: 0`) indexes. Retain malformed legacy entries for review rather than deleting them. Verify the indexes before resuming traffic. Schema changes alone do not remove the old TTL index. Tokens already removed by that index cannot be recovered; rotating access-token secrets invalidates those sessions and requires users to sign in again.
+
+Authenticated endpoints return 503 when blacklist/user lookup fails; invalid credentials continue to return 403 (revoked tokens return 401).

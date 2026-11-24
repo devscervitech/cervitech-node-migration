@@ -214,3 +214,22 @@ describe('postBatchNeckAngleRecordAsync — prompt-gated average-angle push', ()
     );
   });
 });
+
+it('retains readings in the sixth partial week of a month', async () => {
+  const result = await NeckAngleService.getEachWeekOfTheMonthAverageNeckAngle([
+    { angle: 20, dateTimeRecorded: new Date('2026-03-30T23:30:00Z') },
+    { angle: 40, dateTimeRecorded: new Date('2026-03-31T23:30:00Z') },
+  ]);
+  expect(result.find(row => row.week === 6)?.averageNeckAngle).toBe(30);
+});
+it('averages the returned samples and does not overwrite response rate', async () => {
+  setUser({ _id: 'u1', fcmToken: TOKEN });
+  expect(await NeckAngleService.calculateAverageOfLastSetNeckAngles('u1')).toBe(50);
+  expect(users.get('u1')?.save).not.toHaveBeenCalled();
+});
+it('uses the default prompt for existing signup accounts with zero', async () => {
+  setUser({ _id: 'u1', prompt: 0, fcmToken: TOKEN, allowPushNotifications: true });
+  compareAverage.mockResolvedValue(['title', 'body']);
+  await NeckAngleService.postBatchNeckAngleRecordAsync(batch('u1', 5));
+  expect(sendPush).toHaveBeenCalledTimes(1);
+});

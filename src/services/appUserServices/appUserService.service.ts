@@ -1,3 +1,5 @@
+import { startOfDayUtc, endOfDayUtc } from '../goalCycle';
+import { computeCompliance } from '../goalCycle';
 import AppUser, { IAppUser } from '../../models/AppUser';
 import ResponseRate from '../../models/ResponseRate';
 import { PictureUrlUpdateViewModel } from '../../viewmodels/PictureUrlUpdateViewModel';
@@ -13,7 +15,6 @@ import { PushNotificationModelDTO } from '../../types/pushNotificationModel.type
 import { logger } from '../../utils/logger';
 import { UpdateUserRequest } from '../../types/user.types';
 import { AppUserViewModel, toAppUserViewModel } from '../../viewmodels/AppUser.viewmodel';
-import User from '../../models/User';
 // import {FCMTokenUpdateViewModel} from "../../viewmodels/FCMTokenUpdateViewModel";
 import { TokenUtil } from '../../utils/token.util';
 import { EmailUtils } from '../../utils/EmailService/emailutils';
@@ -93,7 +94,6 @@ export class AppUserService {
   static async deleteByIdAsync(id: string): Promise<boolean> {
     try {
       const user = await AppUser.findById(id);
-      console.log(user);
 
       if (!user) {
         throw new CustomException('User does not exist');
@@ -111,7 +111,7 @@ export class AppUserService {
       return true;
     } catch (ex: any) {
       if (ex instanceof CustomException) {
-        logger.error(ex.message);
+        logger.error(ex);
       } else {
         logger.error('Unexpected error while deleting by ID', { error: ex });
       }
@@ -140,7 +140,7 @@ export class AppUserService {
       return true;
     } catch (ex: any) {
       if (ex instanceof CustomException) {
-        logger.error(ex.message);
+        logger.error(ex);
       } else {
         logger.error('Unexpected error while deleting by email', { error: ex });
       }
@@ -158,30 +158,18 @@ export class AppUserService {
       }
 
       const token = TokenUtil.generateToken(user._id.toString(), 'account_deletion');
-      console.log('Generated token:', token);
 
-      console.log('Token before sending email:', token);
       await EmailUtils.sendAccountDeletionRequest(normalizedEmail, user.username, token);
 
       return true;
     } catch (ex: any) {
       if (ex instanceof CustomException) {
-        logger.error(ex.message);
+        logger.error(ex);
       } else {
         logger.error('Unexpected error while requesting account deletion', {
           error: ex,
         });
       }
-      throw ex;
-    }
-  }
-
-  static async deleteAllAsync(): Promise<boolean> {
-    try {
-      await AppUser.updateMany({ deleted: { $ne: true } }, { $set: { deleted: true } });
-      return true;
-    } catch (ex: any) {
-      logger.error('Unexpected error while deleting all users', { error: ex });
       throw ex;
     }
   }
@@ -209,14 +197,12 @@ export class AppUserService {
 
   static async postResponseRateAsync(userId: string): Promise<boolean> {
     try {
-      const responseRate = await ResponseRate.findOne({ userId });
-
-      if (responseRate) {
-        responseRate.response = 1;
-        await responseRate.save();
-      }
-
-      return true;
+      const responseRate = await ResponseRate.findOneAndUpdate(
+        { appUserId: userId, prompt: { $gt: 0 } },
+        { $set: { response: 1 } },
+        { sort: { dateCreated: -1, _id: -1 }, new: true }
+      );
+      return responseRate !== null;
     } catch (error: any) {
       logger.error(error.message || 'Unhandled exception in postResponseRate');
       throw error;
@@ -225,32 +211,21 @@ export class AppUserService {
 
   static async getResponseRateAsync(userId: string, day: Date): Promise<ResponseRateViewModel> {
     try {
-      const startOfDay = new Date(day);
-      startOfDay.setHours(0, 0, 0, 0);
+      const startOfDay = startOfDayUtc(day);
 
-      const endOfDay = new Date(day);
-      endOfDay.setHours(23, 59, 59, 999);
-      console.log(
-        'Calculating response rate for userId:',
-        userId,
-        'from',
-        startOfDay,
-        'to',
-        endOfDay
-      );
+      const endOfDay = endOfDayUtc(day);
       const responseRates = await ResponseRate.find({
         appUserId: userId,
         dateCreated: { $gte: startOfDay, $lte: endOfDay },
       });
 
-      console.log('Fetched response rates:', responseRates);
 
       const totalPrompts = responseRates.reduce((sum, r) => sum + (r.prompt || 0), 0);
       const totalResponses = responseRates.reduce((sum, r) => sum + (r.response || 0), 0);
 
       const groupedByHour: Record<number, { prompts: number; responses: number }> = {};
       responseRates.forEach((entry) => {
-        const hour = new Date(entry.dateCreated).getHours();
+        const hour = new Date(entry.dateCreated).getUTCHours();
         if (!groupedByHour[hour]) {
           groupedByHour[hour] = { prompts: 0, responses: 0 };
         }
@@ -294,7 +269,7 @@ export class AppUserService {
           appUserId: userId,
           dateTimeRecorded: {
             $gte: DateLibrary.getYesterdayDateTime(),
-            $lte: DateLibrary.getCurrentDateTime(),
+            $lte: new Date(),
           },
         });
       } else if (frequency === 'WEEKLY') {
@@ -302,7 +277,7 @@ export class AppUserService {
           appUserId: userId,
           dateTimeRecorded: {
             $gte: DateLibrary.getLastWeekDateTime(),
-            $lte: DateLibrary.getCurrentDateTime(),
+            $lte: new Date(),
           },
         });
       } else {
@@ -315,15 +290,12 @@ export class AppUserService {
       const goal = await Goal.findById(goalId);
       if (!goal) return false;
 
-      const compliance =
-        average >= goal.targetedAverageNeckAngle
-          ? 100
-          : Math.min(100, Math.round((average / goal.targetedAverageNeckAngle) * 1000) / 10);
+      const compliance = computeCompliance(average, goal.targetedAverageNeckAngle);
 
       const goalCycleReport = new GoalCycleCompletionReport({
         actualAverageNeckAngle: isNaN(average) ? 0 : Math.round(average * 10) / 10,
         complianceInPercentage: isNaN(compliance) ? 0 : compliance,
-        dateOfConcludedCycle: DateLibrary.getCurrentDateTime(),
+        dateOfConcludedCycle: new Date(),
         goalId,
       });
 
@@ -349,7 +321,7 @@ export class AppUserService {
 
   static async getFCMTokenById(id: string): Promise<string> {
     try {
-      const user = await AppUser.findOne({ id }).exec();
+      const user = await AppUser.findById(id).exec();
       if (!user) {
         throw new CustomException('User does not exist in our system');
       }

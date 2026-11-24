@@ -1,3 +1,4 @@
+import { revokeToken } from '../utils/revokeToken';
 import { Request, Response } from 'express';
 import { AuthService } from '../services/auth.service';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
@@ -5,6 +6,18 @@ import { TokenUtil } from '../utils/token.util';
 import TokenBlacklist from '../models/TokenBlacklist';
 import { logger } from '../utils/logger';
 import { sendSuccess, sendError } from '../utils/apiResponse';
+import {
+  appUserChangePasswordSchema,
+  appUserResetPasswordSchema,
+  appUserResetRequestSchema,
+  appUserVerifyResetOtpSchema,
+  usernameExistsQuerySchema,
+  emailValidationQuerySchema,
+} from '../validation/schemas/auth.schema';
+
+function validationMessage(error: { details: Array<{ message: string }> }): string {
+  return error.details.map(({ message }) => message.replace(/\"/g, '')).join('; ');
+}
 
 export const AuthController = {
   // -------------------------
@@ -34,7 +47,7 @@ export const AuthController = {
       logger.info('User signed up successfully', { email: body.email });
       return sendSuccess(res, result.data, result.message, 201);
     } catch (err: any) {
-      logger.error('User signup failed (unexpected)', { error: err.message });
+      logger.error('User signup failed (unexpected)', { error: err });
       return sendError(res, 500, 'Internal server error during signup');
     }
   },
@@ -67,7 +80,7 @@ export const AuthController = {
       logger.info('Authentication successful', { emailOrUsername: body.emailOrUsername });
       return sendSuccess(res, result.data, result.message, 200);
     } catch (err: any) {
-      logger.error('Authentication failed (unexpected)', { error: err.message });
+      logger.error('Authentication failed (unexpected)', { error: err });
       return sendError(res, 500, 'Internal server error during authentication');
     }
   },
@@ -83,13 +96,12 @@ export const AuthController = {
       if (!userId) return sendError(res, 401, 'User ID missing');
       if (!token) return sendError(res, 400, 'Token is required');
 
-      await TokenBlacklist.create({ token });
       const result = await AuthService.logout({ userId, token });
 
       if (!result.success) return sendError(res, 400, result.message);
       return sendSuccess(res, undefined, result.message, 200);
     } catch (err: any) {
-      logger.error('Logout failed', { error: err.message });
+      logger.error('Logout failed', { error: err });
       return sendError(res, 500, 'Internal server error during logout');
     }
   },
@@ -100,20 +112,31 @@ export const AuthController = {
   async changePassword(req: AuthenticatedRequest, res: Response) {
     try {
       const userId = req.user?.userId;
-      const formerPassword = req.body.FormerPassword ?? req.body.formerPassword;
-      const newPassword = req.body.NewPassword ?? req.body.newPassword;
+      const body = req.body ?? {};
+      const validation = appUserChangePasswordSchema.validate(
+        {
+          formerPassword: body.FormerPassword ?? body.formerPassword,
+          newPassword: body.NewPassword ?? body.newPassword,
+        },
+        { abortEarly: false, allowUnknown: false }
+      );
 
       if (!userId) return sendError(res, 401, 'User ID missing');
-      if (!formerPassword || !newPassword)
-        return sendError(res, 401, 'Former password or New password is missing');
+      if (validation.error) return sendError(res, 400, validationMessage(validation.error));
 
-      const result = await AuthService.changePassword(userId, formerPassword, newPassword);
+      const result = await AuthService.changePassword(
+        userId,
+        validation.value.formerPassword,
+        validation.value.newPassword
+      );
 
-      if (!result.success) return sendError(res, 401, result.message);
+      if (!result.success) {
+        return sendError(res, result.code === 'INVALID_NEW_PASSWORD' ? 400 : 401, result.message);
+      }
 
       return sendSuccess(res, undefined, result.message, 200);
     } catch (err: any) {
-      logger.error('Password change failed', { error: err.message });
+      logger.error('Password change failed', { error: err });
       return sendError(res, 500, 'Internal server error during logout');
     }
   },
@@ -123,15 +146,19 @@ export const AuthController = {
   // -------------------------
   async sendPasswordToken(req: Request, res: Response) {
     try {
-      const email = req.body.Email ?? req.body.email ?? req.query.email;
-      if (!email) return sendError(res, 400, 'Email is required');
+      const body = req.body ?? {};
+      const validation = appUserResetRequestSchema.validate(
+        { email: body.Email ?? body.email ?? req.query.email },
+        { abortEarly: false, allowUnknown: false }
+      );
+      if (validation.error) return sendError(res, 400, validationMessage(validation.error));
 
-      const result = await AuthService.sendPasswordResetToken({ email });
+      const result = await AuthService.sendPasswordResetToken(validation.value);
       const data = result.otp ? { otp: result.otp } : undefined;
 
       return sendSuccess(res, data, result.message, 200);
     } catch (err: any) {
-      logger.error('SendPasswordToken failed', { error: err.message });
+      logger.error('SendPasswordToken failed', { error: err });
       return sendError(res, 500, 'Internal server error');
     }
   },
@@ -141,16 +168,22 @@ export const AuthController = {
   // -------------------------
   async verifyResetOtp(req: Request, res: Response) {
     try {
-      const email = req.body.Email ?? req.body.email ?? req.query.email;
-      const otp = req.body.Otp ?? req.body.otp ?? req.query.otp;
-      if (!email || !otp) return sendError(res, 400, 'Email and OTP are required');
+      const body = req.body ?? {};
+      const validation = appUserVerifyResetOtpSchema.validate(
+        {
+          email: body.Email ?? body.email ?? req.query.email,
+          otp: body.Otp ?? body.otp ?? req.query.otp,
+        },
+        { abortEarly: false, allowUnknown: false }
+      );
+      if (validation.error) return sendError(res, 400, validationMessage(validation.error));
 
-      const result = await AuthService.verifyResetOtp({ email, otp });
+      const result = await AuthService.verifyResetOtp(validation.value);
       if (!result?.success) return sendError(res, 400, result.message);
 
       return sendSuccess(res, { token: result.token }, result.message, 200);
     } catch (err: any) {
-      logger.error('VerifyResetOtp failed', { error: err.message });
+      logger.error('VerifyResetOtp failed', { error: err });
       return sendError(res, 500, 'Internal server error');
     }
   },
@@ -160,19 +193,21 @@ export const AuthController = {
   // -------------------------
   async resetPassword(req: Request, res: Response) {
     try {
-      const token = req.body.Token ?? req.body.token ?? req.query.token;
-      const newPassword =
-        req.body.NewPassword ?? req.body.newPassword ?? req.body.ConfirmNewPassword;
+      const body = req.body ?? {};
+      const validation = appUserResetPasswordSchema.validate(
+        {
+          token: body.Token ?? body.token ?? req.query.token,
+          newPassword: body.NewPassword ?? body.newPassword ?? body.ConfirmNewPassword,
+        },
+        { abortEarly: false, allowUnknown: false }
+      );
+      if (validation.error) return sendError(res, 400, validationMessage(validation.error));
 
-      if (!token || !newPassword)
-        return sendError(res, 400, 'Token and password are required');
-
-      const result = await AuthService.resetPassword({token, newPassword});
-      await TokenBlacklist.create({ token });
+      const result = await AuthService.resetPassword(validation.value);
 
       return sendSuccess(res, undefined, result.message, 200);
     } catch (err: any) {
-      logger.error('ResetPassword failed', { error: err.message });
+      logger.error('ResetPassword failed', { error: err });
       return sendError(res, 400, err.message);
     }
   },
@@ -182,14 +217,17 @@ export const AuthController = {
   // -------------------------
   async usernameAlreadyExists(req: Request, res: Response) {
     try {
-      const username = (req.query.Username ?? req.query.username) as string;
-      if (!username) return sendError(res, 400, 'Username is required');
+      const validation = usernameExistsQuerySchema.validate(
+        { username: req.query.Username ?? req.query.username },
+        { abortEarly: false, allowUnknown: false }
+      );
+      if (validation.error) return sendError(res, 400, validationMessage(validation.error));
 
-      const exists = await AuthService.usernameAlreadyExists(username);
-      return res.status(200).json({ exists });
+      const exists = await AuthService.usernameAlreadyExists(validation.value.username);
+      return sendSuccess(res, { exists }, 'Username availability checked.', 200);
     } catch (err: any) {
-      logger.error('usernameAlreadyExists failed', { error: err.message });
-      return sendError(res, 500, err.message);
+      logger.error('usernameAlreadyExists failed', { error: err });
+      return sendError(res, 500, 'Unable to check username availability.');
     }
   },
 
@@ -199,14 +237,17 @@ export const AuthController = {
   async isValidEmail(req: Request, res: Response) {
     try {
       const body = req.body ?? {};
-      const email = body.Email ?? body.email ?? req.query.Email ?? req.query.email;
-      if (!email) return sendError(res, 400, 'Email is required');
+      const validation = emailValidationQuerySchema.validate(
+        { email: body.Email ?? body.email ?? req.query.Email ?? req.query.email },
+        { abortEarly: false, allowUnknown: false }
+      );
+      if (validation.error) return sendError(res, 400, validationMessage(validation.error));
 
-      const isValid = await AuthService.isValidEmail(email);
-      return res.status(200).json({ isValid });
+      const isValid = await AuthService.isValidEmail(validation.value.email);
+      return sendSuccess(res, { isValid }, 'Email validation completed.', 200);
     } catch (err: any) {
-      logger.error('isValidEmail failed', { error: err.message });
-      return sendError(res, 500, err.message);
+      logger.error('isValidEmail failed', { error: err });
+      return sendError(res, 500, 'Unable to validate email.');
     }
   },
 };

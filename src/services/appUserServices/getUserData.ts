@@ -24,7 +24,7 @@ export class GetUserDataService {
     }
     catch (error) {
       if (error instanceof CustomException) {
-        logger.error(error.message);
+        logger.error(error);
         throw error;
       }
       logger.error('Unexpected error while retrieving user by email:', error);
@@ -51,7 +51,7 @@ export class GetUserDataService {
 
     } catch (error) {
       if (error instanceof CustomException) {
-        logger.error(error.message);
+        logger.error(error);
         throw error;
       }
       logger.error('Unexpected error while retrieving user by id:', error);
@@ -59,7 +59,7 @@ export class GetUserDataService {
     }
   }
 
-  public async getFCMTokenByUsername(username: string): Promise<string> {
+  public static async getFCMTokenByUsername(username: string): Promise<string> {
       try {
         const user = await AppUser.findOne({ username }).exec();
   
@@ -74,7 +74,7 @@ export class GetUserDataService {
         return user.fcmToken;
       } catch (error) {
         if (error instanceof CustomException) {
-          logger.error(error.message);
+          logger.error(error);
           throw error;
         }
   
@@ -94,7 +94,7 @@ export class GetUserDataService {
       return user.allowPushNotifications;
     } catch (error) {
       if (error instanceof CustomException) {
-        logger.error(error.message);
+        logger.error(error);
         throw error;
       }
       throw new Error('Unexpected error occurred');

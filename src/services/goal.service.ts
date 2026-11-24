@@ -5,11 +5,7 @@ import { GoalCycleReportViewModel } from '../types/goalCycleReport.types';
 import { CustomException } from '../utils/customException';
 import { DateLibrary } from '../utils/dateLibrary';
 import { Utils } from '../utils/utils';
-import { PushNotificationDriver } from './pushNotificationDriver';
-import { CronJob } from 'cron';
 import { logger } from '../utils/logger';
-import { AppUserService } from './appUserServices/appUserService.service';
-import { PushNotificationModelDTO } from '../types/pushNotificationModel.types';
 import { GoalCycleCompletionReport } from '../models/GoalCycleCompletionReport';
 import { computeFirstCycleEndsAt, isSupportedFrequency } from './goalCycle';
 
@@ -28,7 +24,6 @@ export class GoalService {
         logger.info('turn-on goal with no goal cycle reports', { userId: appUserId });
       }
 
-      const incomingReports = model.goalCycleCompletionReports ?? [];
 
       // Save each GoalCycleCompletionReport individually
       const savedReports = await Promise.all(
@@ -47,14 +42,15 @@ export class GoalService {
         })
       );
 
+      const now = new Date();
       const goal = new Goal({
         appUserId,
         targetedAverageNeckAngle: model.targetedAverageNeckAngle,
         frequency: model.frequency,
-        dateSet: DateLibrary.getCurrentDateTime(),
+        dateSet: now,
         goalCycleCompletionReports: reports,
         nextCycleEndsAt: isSupportedFrequency(model.frequency)
-          ? computeFirstCycleEndsAt(DateLibrary.getCurrentDateTime(), model.frequency)
+          ? computeFirstCycleEndsAt(now, model.frequency)
           : undefined,
       });
       const savedGoal = await goal.save();
@@ -70,7 +66,6 @@ export class GoalService {
       await user.save();
       logger.info('Goal flag enabled for user', { userId: appUserId });
 
-      // this.scheduleJob(model.appUserId, 'DAILY', savedGoal.dateSet, savedGoal._id?.toString() || '');
 
       return true;
     } catch (error: any) {
@@ -91,11 +86,10 @@ export class GoalService {
       user.isGoalOn = false;
       await user.save();
 
-      // this.removeScheduledJob(userId);
 
       return true;
     } catch (error: any) {
-      logger.error(error.message);
+      logger.error(error);
       throw new CustomException(error.message);
     }
   }
@@ -160,7 +154,7 @@ export class GoalService {
 
       return reports;
     } catch (error: any) {
-      logger.error(error.message);
+      logger.error(error);
       throw new CustomException(error.message);
     }
   }
@@ -169,61 +163,11 @@ export class GoalService {
     try {
       const goals = await Goal.find({ appUserId }).sort({ dateSet: -1 }).exec();
       const lastGoal = goals[0]; // Most recent goal due to sorting
-      console.log('Last Goal:', lastGoal);
       return lastGoal?.targetedAverageNeckAngle ?? 0;
     } catch (error: any) {
-      logger.error(error.message);
+      logger.error(error);
       throw new CustomException(error.message);
     }
   }
 
-  async testJobScheduler(): Promise<boolean> {
-    try {
-      const model: PushNotificationModelDTO = {
-        to: 'et9fhiwOUvI:APA91bEyUxI25XaktkMxe1tt-i9Ff3z4-SL8jIDky2f1ClgqAT62RjhxLoZxq6191Kqf_byKhHTJxXhdRM56640ISc-2clzhT3lZXDuhrY_lX573gw00ADQB8aZnOM7x7yHGxgttajgP',
-        title: 'Test Scheduler',
-        body: 'Toyosi the laziest dev',
-      };
-
-      new CronJob(
-        '* * * * *', // runs every minute
-        async () => {
-          await PushNotificationDriver.sendPushNotification(model);
-        },
-        null, // onComplete
-        true // start immediately
-      );
-      return true;
-    } catch (error: any) {
-      logger.error(error.message);
-      throw new CustomException(error.message);
-    }
-  }
-
-  private formatDay(dayIndex: number): string {
-    const days = ['SUN', 'MON', 'TUE', 'WED', 'THUR', 'FRI', 'SAT'];
-    return days[dayIndex] ?? 'NIL';
-  }
-
-  private scheduleJob(userId: string, frequency: string, dateSet: Date, goalId: string): void {
-    const jobId = `userid-${userId}`;
-    const cronTime = frequency === 'DAILY' ? '*/5 * * * *' : '*/10 * * * *';
-
-    new CronJob(
-      cronTime,
-      () => {
-        AppUserService.calculateAverageOfLastWeekOrDay(userId, frequency, dateSet, goalId);
-      },
-      null,
-      true,
-      undefined,
-      undefined,
-      false
-    );
-  }
-
-  private removeScheduledJob(userId: string): void {
-    const jobId = `userid-${userId}`;
-    // Implement job removal logic depending on your scheduler
-  }
 }

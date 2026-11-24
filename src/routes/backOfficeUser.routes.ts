@@ -1,27 +1,33 @@
 import { Router } from "express";
 import BackOfficeUserController from "../controllers/backOfficeUser.controller";
-import { authenticateJWT, authorizeRole } from "../middlewares/auth.middleware";
+import {
+  authenticateJWT,
+  authorizeRole,
+  requireAccessLevel,
+  requireWritable,
+} from "../middlewares/auth.middleware";
+import { authRateLimit } from "../middlewares/authRateLimit.middleware";
 
 const router = Router();
+const backofficeLoginRateLimit = authRateLimit('backoffice-login', 10, 15 * 60 * 1000);
+const backofficeResetRequestRateLimit = authRateLimit('backoffice-reset-request', 5, 15 * 60 * 1000);
+const backofficeResetVerifyRateLimit = authRateLimit('backoffice-reset-verify', 10, 15 * 60 * 1000);
+const backofficeResetPasswordRateLimit = authRateLimit('backoffice-reset-password', 10, 15 * 60 * 1000);
 
 /**
  * @openapi
  * /backoffice-users/signup:
  *   post:
  *     tags: [BackOfficeUser]
- *     summary: Create a back-office user
+ *     summary: Create a back-office user (administrator only)
+ *     security:
+ *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
  *           schema:
- *             type: object
- *             required: [username, password]
- *             properties:
- *               username:
- *                 type: string
- *               password:
- *                 type: string
+ *             $ref: '#/components/schemas/CreateBackofficeUserRequest'
  *     responses:
  *       201:
  *         description: User created
@@ -29,14 +35,45 @@ const router = Router();
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ApiSuccessResponse'
+ *       400:
+ *         description: Invalid user fields
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
  *       500:
  *         description: Failed to create user
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       401:
+ *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       403:
+ *         description: Administrator privileges required or account is read-only
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       409:
+ *         description: Another account security mutation is in progress
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
  */
-router.post("/signup", BackOfficeUserController.createUser);
+router.post(
+  "/signup",
+  authenticateJWT,
+  authorizeRole('BACKOFFICE_USER'),
+  requireAccessLevel('ADMIN'),
+  requireWritable,
+  BackOfficeUserController.createUser
+);
 
 /**
  * @openapi
@@ -49,13 +86,7 @@ router.post("/signup", BackOfficeUserController.createUser);
  *       content:
  *         application/json:
  *           schema:
- *             type: object
- *             required: [username, password]
- *             properties:
- *               username:
- *                 type: string
- *               password:
- *                 type: string
+ *             $ref: '#/components/schemas/BackofficeLoginRequest'
  *     responses:
  *       200:
  *         description: Authenticated
@@ -75,8 +106,14 @@ router.post("/signup", BackOfficeUserController.createUser);
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       429:
+ *         description: Login request limit exceeded
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
  */
-router.post("/login", BackOfficeUserController.loginController);
+router.post("/login", backofficeLoginRateLimit, BackOfficeUserController.loginController);
 
 /**
  * @openapi
@@ -89,15 +126,10 @@ router.post("/login", BackOfficeUserController.loginController);
  *       content:
  *         application/json:
  *           schema:
- *             type: object
- *             required: [email]
- *             properties:
- *               email:
- *                 type: string
- *                 format: email
+ *             $ref: '#/components/schemas/BackofficeForgotPasswordRequest'
  *     responses:
  *       200:
- *         description: If the account exists, an OTP is sent
+ *         description: Generic response whether or not the account exists; OTP is never included
  *         content:
  *           application/json:
  *             schema:
@@ -108,8 +140,14 @@ router.post("/login", BackOfficeUserController.loginController);
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       429:
+ *         description: Password-reset request limit exceeded
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
  */
-router.post("/forgot-password", BackOfficeUserController.forgotPassword);
+router.post("/forgot-password", backofficeResetRequestRateLimit, BackOfficeUserController.forgotPassword);
 
 /**
  * @openapi
@@ -122,15 +160,7 @@ router.post("/forgot-password", BackOfficeUserController.forgotPassword);
  *       content:
  *         application/json:
  *           schema:
- *             type: object
- *             required: [email, otp]
- *             properties:
- *               email:
- *                 type: string
- *                 format: email
- *               otp:
- *                 type: string
- *                 description: 6-digit code sent by email
+ *             $ref: '#/components/schemas/BackofficeVerifyResetOtpRequest'
  *     responses:
  *       200:
  *         description: OTP verified; data contains a short-lived reset token
@@ -144,8 +174,14 @@ router.post("/forgot-password", BackOfficeUserController.forgotPassword);
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       429:
+ *         description: OTP verification limit exceeded
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
  */
-router.post("/verify-reset-otp", BackOfficeUserController.verifyResetOtp);
+router.post("/verify-reset-otp", backofficeResetVerifyRateLimit, BackOfficeUserController.verifyResetOtp);
 
 /**
  * @openapi
@@ -153,18 +189,13 @@ router.post("/verify-reset-otp", BackOfficeUserController.verifyResetOtp);
  *   post:
  *     tags: [BackOfficeUser]
  *     summary: Reset a back-office user's password using a reset token
+ *     description: Requires a password_reset token scoped to BACKOFFICE_USER; tokens from other account types are rejected.
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
  *           schema:
- *             type: object
- *             required: [token, newPassword]
- *             properties:
- *               token:
- *                 type: string
- *               newPassword:
- *                 type: string
+ *             $ref: '#/components/schemas/BackofficeResetPasswordRequest'
  *     responses:
  *       200:
  *         description: Password reset
@@ -178,8 +209,14 @@ router.post("/verify-reset-otp", BackOfficeUserController.verifyResetOtp);
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       429:
+ *         description: Password-reset attempt limit exceeded
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
  */
-router.post("/reset-password", BackOfficeUserController.resetPassword);
+router.post("/reset-password", backofficeResetPasswordRateLimit, BackOfficeUserController.resetPassword);
 
 /**
  * @openapi
@@ -190,6 +227,8 @@ router.post("/reset-password", BackOfficeUserController.resetPassword);
  *     security:
  *       - bearerAuth: []
  *     responses:
+ *       503:
+ *         description: Authentication storage temporarily unavailable
  *       200:
  *         description: Logged out
  *         content:
@@ -218,12 +257,10 @@ router.post("/logout", authenticateJWT, authorizeRole('BACKOFFICE_USER'), BackOf
  *       content:
  *         application/json:
  *           schema:
- *             type: object
- *             required: [newPassword]
- *             properties:
- *               newPassword:
- *                 type: string
+ *             $ref: '#/components/schemas/BackofficeChangePasswordRequest'
  *     responses:
+ *       503:
+ *         description: Authentication storage temporarily unavailable
  *       200:
  *         description: Password changed
  *         content:
@@ -231,7 +268,19 @@ router.post("/logout", authenticateJWT, authorizeRole('BACKOFFICE_USER'), BackOf
  *             schema:
  *               $ref: '#/components/schemas/ApiSuccessResponse'
  *       400:
- *         description: User ID or new password missing
+ *         description: Invalid password fields
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       401:
+ *         description: Not authenticated or current password is incorrect
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       404:
+ *         description: User not found
  *         content:
  *           application/json:
  *             schema:
@@ -255,6 +304,8 @@ router.post("/change-password", authenticateJWT, authorizeRole('BACKOFFICE_USER'
  *         schema:
  *           type: integer
  *     responses:
+ *       503:
+ *         description: Authentication storage temporarily unavailable
  *       200:
  *         description: Users retrieved
  *         content:
@@ -267,8 +318,26 @@ router.post("/change-password", authenticateJWT, authorizeRole('BACKOFFICE_USER'
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       401:
+ *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       403:
+ *         description: Administrator privileges required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
  */
-router.get("/", authenticateJWT, authorizeRole('BACKOFFICE_USER'), BackOfficeUserController.getUsers);
+router.get(
+  "/",
+  authenticateJWT,
+  authorizeRole('BACKOFFICE_USER'),
+  requireAccessLevel('ADMIN'),
+  BackOfficeUserController.getUsers
+);
 
 /**
  * @openapi
@@ -285,12 +354,38 @@ router.get("/", authenticateJWT, authorizeRole('BACKOFFICE_USER'), BackOfficeUse
  *         schema:
  *           type: string
  *     responses:
+ *       503:
+ *         description: Authentication storage temporarily unavailable
  *       200:
  *         description: User deleted
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ApiSuccessResponse'
+ *       400:
+ *         description: Invalid user ID
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       401:
+ *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       403:
+ *         description: Administrator privileges required, account is read-only, or self-deletion attempted
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       409:
+ *         description: Deletion would remove the last active administrator or another account security change is in progress
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
  *       404:
  *         description: User not found
  *         content:
@@ -298,14 +393,21 @@ router.get("/", authenticateJWT, authorizeRole('BACKOFFICE_USER'), BackOfficeUse
  *             schema:
  *               $ref: '#/components/schemas/ApiErrorResponse'
  */
-router.delete("/:id", authenticateJWT, authorizeRole('BACKOFFICE_USER'), BackOfficeUserController.deleteUser);
+router.delete(
+  "/:id",
+  authenticateJWT,
+  authorizeRole('BACKOFFICE_USER'),
+  requireAccessLevel('ADMIN'),
+  requireWritable,
+  BackOfficeUserController.deleteUser
+);
 
 /**
  * @openapi
  * /backoffice-users/{id}:
  *   put:
  *     tags: [BackOfficeUser]
- *     summary: Update a back-office user by ID
+ *     summary: Update a back-office user profile (administrator only)
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -319,8 +421,10 @@ router.delete("/:id", authenticateJWT, authorizeRole('BACKOFFICE_USER'), BackOff
  *       content:
  *         application/json:
  *           schema:
- *             type: object
+ *             $ref: '#/components/schemas/UpdateBackofficeProfileRequest'
  *     responses:
+ *       503:
+ *         description: Authentication storage temporarily unavailable
  *       200:
  *         description: User updated
  *         content:
@@ -328,7 +432,19 @@ router.delete("/:id", authenticateJWT, authorizeRole('BACKOFFICE_USER'), BackOff
  *             schema:
  *               $ref: '#/components/schemas/ApiSuccessResponse'
  *       400:
- *         description: User ID missing
+ *         description: Invalid user ID or profile fields
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       401:
+ *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       403:
+ *         description: Administrator privileges required or account is read-only
  *         content:
  *           application/json:
  *             schema:
@@ -340,14 +456,89 @@ router.delete("/:id", authenticateJWT, authorizeRole('BACKOFFICE_USER'), BackOff
  *             schema:
  *               $ref: '#/components/schemas/ApiErrorResponse'
  */
-router.put("/:id", authenticateJWT, authorizeRole('BACKOFFICE_USER'), BackOfficeUserController.updateUser);
+router.put(
+  "/:id",
+  authenticateJWT,
+  authorizeRole('BACKOFFICE_USER'),
+  requireAccessLevel('ADMIN'),
+  requireWritable,
+  BackOfficeUserController.updateUser
+);
+
+/**
+ * @openapi
+ * /backoffice-users/{id}/access:
+ *   put:
+ *     tags: [BackOfficeUser]
+ *     summary: Update another back-office user's access level or read-only setting
+ *     description: Only administrators may change another user's access level. A writable administrator cannot change their own access settings or remove the last active administrator.
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/UpdateBackofficeAccessRequest'
+ *     responses:
+ *       200:
+ *         description: Access metadata updated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiSuccessResponse'
+ *       400:
+ *         description: Invalid request body or user ID
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       401:
+ *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       403:
+ *         description: Administrator privileges required, account is read-only, or self-modification attempted
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       404:
+ *         description: User not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       409:
+ *         description: Update would remove the last active administrator or another account security change is in progress
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
+ */
+router.put(
+  "/:id/access",
+  authenticateJWT,
+  authorizeRole('BACKOFFICE_USER'),
+  requireAccessLevel('ADMIN'),
+  requireWritable,
+  BackOfficeUserController.updateAccess
+);
 
 /**
  * @openapi
  * /backoffice-users/{id}:
  *   get:
  *     tags: [BackOfficeUser]
- *     summary: "[Dev] Get a back-office user by ID"
+ *     summary: Get a back-office user by ID (administrator only)
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -357,12 +548,26 @@ router.put("/:id", authenticateJWT, authorizeRole('BACKOFFICE_USER'), BackOffice
  *         schema:
  *           type: string
  *     responses:
+ *       503:
+ *         description: Authentication storage temporarily unavailable
  *       200:
  *         description: User found
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ApiSuccessResponse'
+ *       401:
+ *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       403:
+ *         description: Administrator privileges required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
  *       404:
  *         description: User not found
  *         content:
@@ -370,6 +575,12 @@ router.put("/:id", authenticateJWT, authorizeRole('BACKOFFICE_USER'), BackOffice
  *             schema:
  *               $ref: '#/components/schemas/ApiErrorResponse'
  */
-router.get("/:id", authenticateJWT, authorizeRole('BACKOFFICE_USER'), BackOfficeUserController.testUserById);
+router.get(
+  "/:id",
+  authenticateJWT,
+  authorizeRole('BACKOFFICE_USER'),
+  requireAccessLevel('ADMIN'),
+  BackOfficeUserController.testUserById
+);
 
 export default router;

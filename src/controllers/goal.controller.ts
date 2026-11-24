@@ -115,7 +115,10 @@ export class GoalController {
       // the mobile app's error handling kicked in (an "Unable to load your
       // goals" toast) for what should have been a quiet empty-state screen
       // — for most users, every single time they opened it.
-      res.status(200).json({ success: true, data: result });
+      res.status(200).json({
+        success: true,
+        data: result ?? [],
+      });
     } catch (error) {
       logger.error('Error fetching goals by user ID:');
       res.status(500).json({ error: 'Internal server error' });
@@ -136,10 +139,6 @@ export class GoalController {
     try {
       const result = await GoalService.getCurrentTargetedAverageNeckAngleAsync(userId);
 
-      if (result === null || result === undefined) {
-        res.status(404).json({ error: 'No neck angle data found for this user.' });
-        return;
-      }
 
       res.status(200).json({ success: true, data: result });
     } catch (error) {

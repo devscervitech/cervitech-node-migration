@@ -1,7 +1,7 @@
 // goals.routes.ts
 import { Router } from 'express';
 import { GoalController } from '../controllers/goal.controller';
-import { authenticateJWT } from '../middlewares/auth.middleware';
+import { authenticateJWT, authorizeRole } from '../middlewares/auth.middleware';
 
 const router = Router();
 
@@ -46,8 +46,10 @@ const router = Router();
  *         description: Missing/invalid goal data, or failed to turn on
  *       401:
  *         description: Not authenticated
+ *       403:
+ *         description: Authenticated app-user token required
  */
-router.post('/turn-on', authenticateJWT, GoalController.turnOnGoalByUserId);
+router.post('/turn-on', authenticateJWT, authorizeRole('APP_USER'), GoalController.turnOnGoalByUserId);
 
 /**
  * @openapi
@@ -83,8 +85,10 @@ router.post('/turn-on', authenticateJWT, GoalController.turnOnGoalByUserId);
  *         description: Missing/invalid goal data, or failed to turn off
  *       401:
  *         description: Not authenticated
+ *       403:
+ *         description: Authenticated app-user token required
  */
-router.put('/turn-off', authenticateJWT, GoalController.turnOffGoalByUserId);
+router.put('/turn-off', authenticateJWT, authorizeRole('APP_USER'), GoalController.turnOffGoalByUserId);
 
 /**
  * @openapi
@@ -96,7 +100,7 @@ router.put('/turn-off', authenticateJWT, GoalController.turnOffGoalByUserId);
  *       - bearerAuth: []
  *     responses:
  *       200:
- *         description: Goals found (an empty array is a normal result — e.g. no concluded cycles yet)
+ *         description: Goals found, or an empty array when no completed goal history exists
  *         content:
  *           application/json:
  *             schema:
@@ -129,8 +133,10 @@ router.put('/turn-off', authenticateJWT, GoalController.turnOffGoalByUserId);
  *                         type: string
  *       401:
  *         description: Not authenticated
+ *       403:
+ *         description: Authenticated app-user token required
  */
-router.get('/user-goals', authenticateJWT, GoalController.getGoalsByUserId);
+router.get('/user-goals', authenticateJWT, authorizeRole('APP_USER'), GoalController.getGoalsByUserId);
 
 /**
  * @openapi
@@ -142,7 +148,7 @@ router.get('/user-goals', authenticateJWT, GoalController.getGoalsByUserId);
  *       - bearerAuth: []
  *     responses:
  *       200:
- *         description: Targeted average neck angle
+ *         description: Targeted average neck angle, or zero when no goal exists
  *         content:
  *           application/json:
  *             schema:
@@ -154,9 +160,9 @@ router.get('/user-goals', authenticateJWT, GoalController.getGoalsByUserId);
  *                   type: number
  *       400:
  *         description: Not authenticated
- *       404:
- *         description: No neck angle data found for this user
+ *       403:
+ *         description: Authenticated app-user token required
  */
-router.get('/neck-angle', authenticateJWT, GoalController.getCurrentTargetedAverageNeckAngle);
+router.get('/neck-angle', authenticateJWT, authorizeRole('APP_USER'), GoalController.getCurrentTargetedAverageNeckAngle);
 
 export default router;

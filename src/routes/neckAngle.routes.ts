@@ -1,7 +1,7 @@
 // routes/neckAngleRoutes.ts
 import express from 'express';
 import { NeckAngleController } from '../controllers/neckAngle.controller';
-import { authenticateJWT } from '../middlewares/auth.middleware.js';
+import { authenticateJWT, authorizeRole } from '../middlewares/auth.middleware.js';
 
 const router = express.Router();
 
@@ -13,56 +13,34 @@ const router = express.Router();
  * /neck-angle/records/batch:
  *   post:
  *     tags: [NeckAngle]
- *     summary: Submit a batch of neck-angle records for a user
+ *     summary: Submit neck-angle records for the authenticated app user; body appUserId is ignored
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
  *           schema:
  *             type: object
- *             required: [appUserId, neckAngleRecords]
+ *             required: [neckAngleRecords]
  *             properties:
- *               appUserId:
- *                 type: string
  *               neckAngleRecords:
  *                 type: array
  *                 items:
  *                   type: object
+ *     security:
+ *       - bearerAuth: []
  *     responses:
+ *       401:
+ *         description: Not authenticated
+ *       403:
+ *         description: Account role not permitted
  *       200:
  *         description: Records saved
  *       400:
- *         description: appUserId or neckAngleRecords missing/invalid
+ *         description: neckAngleRecords missing/invalid
  */
-router.post('/records/batch', NeckAngleController.postBatchNeckAngleRecords);
+router.post('/records/batch', authenticateJWT, authorizeRole('APP_USER'), NeckAngleController.postBatchNeckAngleRecords);
 
-/**
- * @openapi
- * /neck-angle/records/random:
- *   post:
- *     tags: [NeckAngle]
- *     summary: "[Dev] Submit a batch of randomly generated test neck-angle records"
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [appUserId, testValues]
- *             properties:
- *               appUserId:
- *                 type: string
- *               testValues:
- *                 type: array
- *                 items:
- *                   type: number
- *     responses:
- *       200:
- *         description: Records saved
- *       400:
- *         description: appUserId or testValues missing/invalid
- */
-router.post('/records/random', NeckAngleController.postRandomTestBatchNeckAngleRecords);
+
 
 /**
  * @openapi
@@ -70,6 +48,7 @@ router.post('/records/random', NeckAngleController.postRandomTestBatchNeckAngleR
  *   get:
  *     tags: [NeckAngle]
  *     summary: Get the authenticated user's computed neck-angle statistics
+ *     description: responseRate is the all-time responses-to-prompts percentage; posture angles do not modify it.
  *     security:
  *       - bearerAuth: []
  *     responses:
@@ -79,8 +58,10 @@ router.post('/records/random', NeckAngleController.postRandomTestBatchNeckAngleR
  *         description: Failed to compute statistics
  *       401:
  *         description: Not authenticated
+ *       403:
+ *         description: Authenticated app-user token required
  */
-router.get('/stats', authenticateJWT, NeckAngleController.getUserNeckAngleStatistics);
+router.get('/stats', authenticateJWT, authorizeRole('APP_USER'), NeckAngleController.getUserNeckAngleStatistics);
 
 /**
  * @openapi
@@ -95,24 +76,17 @@ router.get('/stats', authenticateJWT, NeckAngleController.getUserNeckAngleStatis
  *         description: Notification count reset
  *       401:
  *         description: Not authenticated
+ *       403:
+ *         description: Authenticated app-user token required
  */
 router.post(
   '/notification-count/reset',
   authenticateJWT,
+  authorizeRole('APP_USER'),
   NeckAngleController.resetNotificationCount
 );
 
-/**
- * @openapi
- * /neck-angle/test-users:
- *   get:
- *     tags: [NeckAngle]
- *     summary: "[Dev] List up to 10 app users for testing"
- *     responses:
- *       200:
- *         description: Users retrieved
- */
-router.get('/test-users', NeckAngleController.getUsersForTesting);
+
 
 /**
  * @openapi
@@ -126,19 +100,26 @@ router.get('/test-users', NeckAngleController.getUsersForTesting);
  *         required: true
  *         schema:
  *           type: number
+ *     security:
+ *       - bearerAuth: []
  *     responses:
+ *       401:
+ *         description: Not authenticated
+ *       403:
+ *         description: Account role not permitted
  *       200:
  *         description: Report generated
  *       400:
  *         description: neckAngle query param missing or not numeric
  */
-router.get('/reports/current-day', NeckAngleController.getCurrentDayAverageNeckAngleTextReport);
+router.get('/reports/current-day', authenticateJWT, NeckAngleController.getCurrentDayAverageNeckAngleTextReport);
 
 /**
  * @openapi
  * /neck-angle/weekly-averages:
  *   post:
  *     tags: [NeckAngle]
+ *     description: Uses Monday-start UTC calendar weeks, including a sixth partial week when present.
  *     summary: Compute each week-of-month's average neck angle from raw records
  *     requestBody:
  *       required: true
@@ -156,13 +137,19 @@ router.get('/reports/current-day', NeckAngleController.getCurrentDayAverageNeckA
  *                     dateTimeRecorded:
  *                       type: string
  *                       format: date-time
+ *     security:
+ *       - bearerAuth: []
  *     responses:
+ *       401:
+ *         description: Not authenticated
+ *       403:
+ *         description: Account role not permitted
  *       200:
  *         description: Weekly averages computed
  *       400:
  *         description: records missing or not an array
  */
-router.post('/weekly-averages', NeckAngleController.getWeeklyNeckAngleAverages);
+router.post('/weekly-averages', authenticateJWT, NeckAngleController.getWeeklyNeckAngleAverages);
 
 /**
  * @openapi
@@ -200,7 +187,9 @@ router.post('/weekly-averages', NeckAngleController.getWeeklyNeckAngleAverages);
  *         description: Failed to compute chart data
  *       401:
  *         description: Not authenticated
+ *       403:
+ *         description: Authenticated app-user token required
  */
-router.get('/weekly-chart', authenticateJWT, NeckAngleController.getWeeklyChartData);
+router.get('/weekly-chart', authenticateJWT, authorizeRole('APP_USER'), NeckAngleController.getWeeklyChartData);
 
 export default router;

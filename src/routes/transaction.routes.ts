@@ -1,6 +1,6 @@
 import express from 'express';
 import { TransactionController } from '../controllers/transaction.controller';
-import { authenticateJWT } from '../middlewares/auth.middleware';
+import { authenticateJWT, authorizeRole } from '../middlewares/auth.middleware';
 
 const router = express.Router();
 
@@ -9,6 +9,7 @@ const router = express.Router();
  * /transaction:
  *   get:
  *     tags: [Transaction]
+ *     description: Transaction timestamps are maintained as createdOn and updatedOn.
  *     summary: List the authenticated user's transaction records
  *     security:
  *       - bearerAuth: []
@@ -17,10 +18,12 @@ const router = express.Router();
  *         description: Records found
  *       401:
  *         description: Not authenticated
+ *       403:
+ *         description: Authenticated app-user token required
  *       404:
  *         description: No transaction records found for this user
  */
-router.get('/', authenticateJWT, TransactionController.getTransactionRecordsByUserId);
+router.get('/', authenticateJWT, authorizeRole('APP_USER'), TransactionController.getTransactionRecordsByUserId);
 
 /**
  * @openapi
@@ -43,10 +46,12 @@ router.get('/', authenticateJWT, TransactionController.getTransactionRecordsByUs
  *         description: Invalid transaction ID
  *       401:
  *         description: Not authenticated
+ *       403:
+ *         description: Authenticated app-user token required
  *       404:
  *         description: Transaction record not found
  */
-router.get('/:id', authenticateJWT, TransactionController.getTransactionRecordById);
+router.get('/:id', authenticateJWT, authorizeRole('APP_USER'), TransactionController.getTransactionRecordById);
 
 /**
  * @openapi
@@ -55,13 +60,9 @@ router.get('/:id', authenticateJWT, TransactionController.getTransactionRecordBy
  *     tags: [Transaction]
  *     summary: Create a transaction record for the authenticated user
  *     description: >
- *       Two ways to submit: (1) a Play purchase -- send `purchaseToken`,
- *       `packageName`, and `subscriptionId`; the backend verifies the
- *       purchase against the Android Publisher API and derives `status`
- *       from Google's response, ignoring any client-submitted status. (2)
- *       Legacy -- send `paymentRef` and `status` directly (not independently
- *       verified). `status: 1` (Completed) grants `hasPaid` on the caller's
- *       account in the same request.
+ *       Requires purchaseToken, packageName, and subscriptionId. The backend
+ *       verifies the configured package and allowed product with Google Play.
+ *       Client status and paymentRef never authorize access. Amount must be positive.
  *     security:
  *       - bearerAuth: []
  *     requestBody:
@@ -79,7 +80,9 @@ router.get('/:id', authenticateJWT, TransactionController.getTransactionRecordBy
  *           Play purchase) the purchase token could not be verified
  *       401:
  *         description: Not authenticated
+ *       403:
+ *         description: Authenticated app-user token required
  */
-router.post('/', authenticateJWT, TransactionController.createTransactionRecord);
+router.post('/', authenticateJWT, authorizeRole('APP_USER'), TransactionController.createTransactionRecord);
 
 export default router;

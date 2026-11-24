@@ -1,6 +1,7 @@
+import AppUser from '../models/AppUser';
+import { Utils } from '../utils/utils';
 // user.controller.ts
 import { Request, Response } from 'express';
-import { AutomatePostNeckAngleRecordsViewModel } from '../viewmodels/AutomatePostNeckAngleRecords';
 import { getApiResponseMessages, ApiResponseStatus } from '../utils/apiResponse';
 import { NeckAngleService } from '../services/appUserServices/neckAngle.service';
 import { logger } from '../utils/logger';
@@ -9,13 +10,17 @@ import { NeckAngleModel } from '../models/NeckAngle';
 import { JobScheduler } from '../services/JobScheduler';
 
 export class NeckAngleController {
-  static async postBatchNeckAngleRecords(req: Request, res: Response): Promise<void> {
+  static async postBatchNeckAngleRecords(req: AuthenticatedRequest, res: Response): Promise<void> {
     const model: NeckAngleModel = req.body;
-    logger.info(`NeckAngleModel: ${JSON.stringify(model)}`);
+    const userId = req.user?.userId;
+
+    if (!userId || req.user?.role !== 'APP_USER') {
+      res.status(401).json({ statusCode: 401, message: 'Unauthorized', data: null });
+      return;
+    }
 
     if (
       !model ||
-      typeof model.appUserId !== 'string' ||
       !Array.isArray(model.neckAngleRecords) ||
       model.neckAngleRecords.length === 0
     ) {
@@ -28,7 +33,13 @@ export class NeckAngleController {
     }
 
     try {
-      const data = await NeckAngleService.postBatchNeckAngleRecordAsync(model);
+      const scopedModel: NeckAngleModel = {
+        ...model,
+        appUserId: userId,
+      };
+      for (const record of scopedModel.neckAngleRecords) record.appUserId = userId;
+      logger.info('Neck-angle batch received.', { userId, recordCount: scopedModel.neckAngleRecords.length });
+      const data = await NeckAngleService.postBatchNeckAngleRecordAsync(scopedModel);
       res.status(200).json({
         statusCode: 200,
         message: 'Successful',
@@ -36,7 +47,7 @@ export class NeckAngleController {
       });
     } catch (error: unknown) {
       const err = error instanceof Error ? error : new Error('Custom exception');
-      logger.error(err.message);
+      logger.error(err);
 
       res.status(500).json({
         statusCode: 500,
@@ -57,43 +68,10 @@ export class NeckAngleController {
       if (!Array.isArray(records)) {
         return res.status(400).json({ error: 'records must be an array' });
       }
-      console.log('records received:', records);
       const result = await NeckAngleService.getEachWeekOfTheMonthAverageNeckAngle(records);
       res.json(result);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
-    }
-  }
-
-  static async postRandomTestBatchNeckAngleRecords(req: Request, res: Response): Promise<void> {
-    const model: AutomatePostNeckAngleRecordsViewModel = req.body;
-    logger.info(`AutomatePostNeckAngleRecordsViewModel: ${JSON.stringify(model)}`);
-
-    if (!model || typeof model.appUserId !== 'string' || !Array.isArray(model.testValues)) {
-      res.status(400).json({
-        statusCode: 400,
-        message: 'BadRequest',
-        data: null,
-      });
-      return;
-    }
-
-    try {
-      const data = await NeckAngleService.postRandomBatchNeckAngleRecordForTestAsync(model);
-      res.status(200).json({
-        statusCode: 200,
-        message: 'Successful',
-        data,
-      });
-    } catch (error: unknown) {
-      const err = error instanceof Error ? error : new Error('Custom error');
-      logger.error(err.message);
-
-      res.status(500).json({
-        statusCode: 500,
-        message: err.message,
-        data: null,
-      });
     }
   }
 
@@ -110,7 +88,7 @@ export class NeckAngleController {
   //     });
   //   } catch (error: unknown) {
   //     const err = error instanceof Error ? error : new Error('Custom error');
-  //     logger.error(err.message);
+  //     logger.error(err);
 
   //     res.status(500).json({
   //       statusCode: responses[ApiResponseStatus.Failed],
@@ -135,31 +113,7 @@ export class NeckAngleController {
       });
     } catch (error: unknown) {
       const err = error instanceof Error ? error : new Error('Custom error');
-      logger.error(err.message);
-
-      res.status(500).json({
-        statusCode: 500,
-        message: err.message,
-        data: null,
-      });
-    }
-  }
-
-  static async getUsersForTesting(req: Request, res: Response): Promise<void> {
-    try {
-      const { default: AppUser } = await import('../models/AppUser');
-      const users = await AppUser.find({}, { _id: 1, username: 1, email: 1, fcmToken: 1 }).limit(
-        10
-      );
-
-      res.status(200).json({
-        statusCode: 200,
-        message: 'Users retrieved successfully',
-        data: users,
-      });
-    } catch (error: unknown) {
-      const err = error instanceof Error ? error : new Error('Custom error');
-      logger.error(err.message);
+      logger.error(err);
 
       res.status(500).json({
         statusCode: 500,
@@ -182,7 +136,6 @@ export class NeckAngleController {
     }
 
     try {
-      const { Utils } = await import('../utils/utils');
       const report = Utils.currentDayAverageNeckAngleTextReport(Number(neckAngle));
 
       res.status(200).json({
@@ -195,7 +148,7 @@ export class NeckAngleController {
       });
     } catch (error: unknown) {
       const err = error instanceof Error ? error : new Error('Custom error');
-      logger.error(err.message);
+      logger.error(err);
 
       res.status(500).json({
         statusCode: 500,

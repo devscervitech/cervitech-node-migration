@@ -1,5 +1,5 @@
 import mongoose, { Schema, Document } from 'mongoose';
-import { IUser } from './User';
+import { IUser } from './userFields';
 import { MOBILE_CHANNEL } from '../enums/mobileChannel';
 import { INeckAngleRecord, NeckAngleRecordSchema } from './NeckAngleRecord';
 import { IGoal, GoalSchema } from './Goal';
@@ -52,7 +52,7 @@ const AppUserSchema: Schema = new Schema<IAppUser>({
     enum: Object.values(MOBILE_CHANNEL).filter(val => typeof val === 'number'), 
     default: MOBILE_CHANNEL.WEB,
   },
-  prompt: { type: Number },
+  prompt: { type: Number, default: 5, min: 1 },
   notificationCount: { type: Number },
   deleted: { type: Boolean, default: false },
   lastGoalReminderSentAt: { type: Date },

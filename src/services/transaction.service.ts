@@ -3,6 +3,7 @@ import TransactionRecord, { ITransactionRecord } from '../models/TransactionReco
 import { TransactionViewModel } from '../types/transaction.types';
 import { AppUserService } from './appUserServices/appUserService.service';
 import { CustomException } from '../utils/customException';
+import { TransactionError } from '../utils/transactionError';
 import { TRANSACTION_STATUS } from '../enums/transaction';
 import { AppUserResponse } from '../viewmodels/ResponseRateViewModel';
 import { TransactionValidation } from '../validation/transactionValidation';
@@ -77,7 +78,7 @@ export class TransactionService {
   // (idempotent replay — fine) apart from "claimed by a DIFFERENT user"
   // (a real conflict) — see transactionRecords() below.
   static async findByPaymentRef(paymentRef: string): Promise<ITransactionRecord | null> {
-    return TransactionRecord.findOne({ paymentRef: paymentRef.trim().toLowerCase() });
+    return TransactionRecord.findOne({ paymentRef: paymentRef.trim() });
   }
 
   static async paymentRefAlreadyExists(paymentRef: string): Promise<boolean> {
@@ -89,33 +90,51 @@ export class TransactionService {
     transactionVM: TransactionViewModel
   ): Promise<AppUserResponse> {
     const validationError = TransactionValidation.transactionValidation(transactionVM);
+
     if (validationError) {
+      if (validationError.includes('"purchaseToken" is required')) {
+        throw new TransactionError(
+          'PURCHASE_TOKEN_INVALID',
+          'A verified Google Play purchase token is required.',
+          400
+        );
+      }
+
+      if (
+        validationError.includes('Amount must be a valid number') ||
+        validationError.includes('Amount is required') ||
+        validationError.includes('must be a positive number')
+      ) {
+        throw new TransactionError('TRANSACTION_AMOUNT_INVALID', validationError, 400);
+      }
+
       throw new CustomException(validationError);
     }
+
+    // Normalise validated string values before verification and storage.
+    // Joi's trim() validates a trimmed value but does not update transactionVM.
+    const purchaseToken = transactionVM.purchaseToken?.trim();
+    const packageName = transactionVM.packageName?.trim();
+    const subscriptionId = transactionVM.subscriptionId?.trim();
 
     let status: number;
     let paymentRef: string;
 
-    if (transactionVM.purchaseToken) {
-      // #08: independently verify the purchase with Google rather than
-      // trusting the client-submitted status. packageName/subscriptionId are
-      // guaranteed present by the Joi schema whenever purchaseToken is set.
+    if (purchaseToken) {
       const verification = await GooglePlayService.verifySubscriptionPurchase({
-        packageName: transactionVM.packageName!,
-        subscriptionId: transactionVM.subscriptionId!,
-        purchaseToken: transactionVM.purchaseToken,
+        packageName: packageName!,
+        subscriptionId: subscriptionId!,
+        purchaseToken,
       });
+
       status = this.mapPlayStatusToTransactionStatus(verification.status);
-      paymentRef = transactionVM.purchaseToken;
+      paymentRef = purchaseToken;
     } else {
-      // Legacy path: no purchase token, so the client-submitted status is
-      // trusted as-is. Still pending frontend coordination on migrating
-      // fully to purchase tokens (see #08's ticket notes).
-      logger.warn('Recording transaction without Play verification; status is client-submitted.', {
-        appUserId,
-      });
-      status = this.parseTransactionStatus(transactionVM.status);
-      paymentRef = transactionVM.paymentRef!;
+      throw new TransactionError(
+        'PURCHASE_TOKEN_INVALID',
+        'A verified Google Play purchase token is required.',
+        400
+      );
     }
 
     // A user can legitimately submit more than one transaction over their
@@ -131,8 +150,14 @@ export class TransactionService {
     const existingByRef = await this.findByPaymentRef(paymentRef);
     if (existingByRef) {
       if (existingByRef.appUserId !== appUserId) {
-        throw new CustomException('This purchase is already associated with a different account.');
+        throw new TransactionError(
+          'PURCHASE_ALREADY_OWNED',
+          'This purchase is already associated with a different account.',
+          409
+        );
       }
+      existingByRef.status = status;
+      await existingByRef.save();
       // Same user, same token, already on file — idempotent replay (e.g. a
       // restore-purchases call, or the client retrying after a timeout on
       // a response that actually landed). Re-run entitlement in case the
@@ -151,12 +176,19 @@ export class TransactionService {
       status,
       transDate: this.parseTransactionDate(transactionVM.transDate),
       description: transactionVM.description,
-      purchaseToken: transactionVM.purchaseToken,
-      packageName: transactionVM.packageName,
-      subscriptionId: transactionVM.subscriptionId,
+      purchaseToken,
+      packageName,
+      subscriptionId,
     });
 
-    await transaction.save();
+    try {
+      await transaction.save();
+    } catch (error: any) {
+      if (error?.code !== 11000) throw error;
+      // Another request won the unique-index race. Reuse its record and
+      // enforce ownership through the same verified replay path.
+      return this.transactionRecords(appUserId, transactionVM);
+    }
 
     if (status === TRANSACTION_STATUS.Completed) {
       return this.grantEntitlement(transaction);

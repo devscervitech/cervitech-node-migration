@@ -13,11 +13,11 @@ export function cycleDurationMs(frequency: CycleFrequency): number {
   return frequency === GOAL_FREQUENCY.DAILY ? DAY_MS : 7 * DAY_MS;
 }
 
-function endOfDayUtc(date: Date): Date {
+export function endOfDayUtc(date: Date): Date {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1) - 1);
 }
 
-function startOfWeekUtc(date: Date): Date {
+export function startOfWeekUtc(date: Date): Date {
   const day = date.getUTCDay();
   const diff = (day === 0 ? -6 : 1) - day;
   const start = new Date(
@@ -26,7 +26,7 @@ function startOfWeekUtc(date: Date): Date {
   return start;
 }
 
-function endOfWeekUtc(date: Date): Date {
+export function endOfWeekUtc(date: Date): Date {
   return new Date(startOfWeekUtc(date).getTime() + 7 * DAY_MS - 1);
 }
 
@@ -80,4 +80,8 @@ export function buildGoalCyclePushPayload(
     body: `You scored ${score}/100 ${period} — keep it up!`,
     data: { type: 'goal_cycle_report', frequency },
   };
+}
+
+export function startOfDayUtc(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
 }
