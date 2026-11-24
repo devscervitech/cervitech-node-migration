@@ -1,43 +1,55 @@
 # Environment Variables Audit Report
 
 ## Summary
-This document lists all environment variables used in the CerviTech Node.js application, organized by category and purpose.
-
-**Total Environment Variables: 48**
+This document lists the environment variables in the CerviTech Node.js application, organized by category and purpose. The "Required" column distinguishes variables the API needs to **start** from variables a specific **feature** needs (email, payments). Legacy variables that no code reads are marked as such.
 
 ---
 
-## 1. Core Application Configuration (3)
+## 1. Core Application Configuration
 
 | Variable | Purpose | Required | Default |
 |----------|---------|----------|---------|
-| `NODE_ENV` | Application environment (production, development, staging) | Yes | - |
-| `PORT` | Server port number | No | 4000 |
-| `APP_PORT` | Docker compose app port mapping | No | 8000 |
+| `NODE_ENV` | Application environment (production, development, staging). `production` disables the localhost CORS fallback | No (the Docker image sets `production`) | - |
+| `PORT` | Port the API listens on (1-65535; invalid values stop startup). The Docker `HEALTHCHECK` probes this port | No | 8000 |
+| `APP_PORT` | Host port docker-compose publishes; mapped to the container's `PORT` | No | 8000 |
+| `TRUST_PROXY_HOPS` | Exact number of trusted reverse proxies in front of the API (Express `trust proxy` hop count; non-negative integer, invalid values stop startup). Determines the client IP used by per-IP auth rate limiting. Use `0` when clients connect directly; behind a proxy, `0` makes all clients share the proxy's IP, and a value that is too high lets clients spoof their IP via `X-Forwarded-For`. Passed through by docker-compose | No | 0 |
+| `LOG_LEVEL` | Winston log level | No | `info` |
+| `REMINDER_JOB_ENABLED` / `REMINDER_CRON_SCHEDULE` | See section 9 | No | - |
 
-**Files:** `src/server.ts`
+**Files:** `src/config/runtime.ts`, `src/server.ts`, `src/app.ts`, `src/utils/logger.ts`
+
+### Startup and health checks
+
+`src/server.ts` connects to MongoDB and builds the startup indexes first, then listens on `PORT`, then starts the background jobs. If any of those steps fails, the error is logged and the process exits with code 1. It never stays up half-started.
+
+| Endpoint | Meaning | Status codes |
+|----------|---------|--------------|
+| `GET /health` | **Liveness:** the process is serving HTTP. Checks no dependencies. Used by the Docker `HEALTHCHECK` | 200 |
+| `GET /api/v1/health/push` | Push-delivery statistics (unchanged; not a service health signal) | 200 / 500 |
+
+An unhealthy Docker status is only reported by Docker. Whether the container is restarted or removed from rotation depends on the orchestrator. The liveness probe exposes no internal details. There is no separate readiness endpoint; add one only when a load balancer or orchestrator needs it.
 
 ---
 
-## 2. Database Configuration (8)
+## 2. Database Configuration
 
 ### MongoDB URI Connection
 | Variable | Purpose | Required | Default |
 |----------|---------|----------|---------|
-| `MONGODB_URI` | Complete MongoDB connection string | Yes | `mongodb://localhost:27017/cervitechdb` |
+| `MONGODB_URI` | Complete MongoDB connection string (`mongodb://` or `mongodb+srv://`). Validated at startup; the API then connects before listening and exits with code 1 if the database is unreachable | Yes (startup) | none (a missing or blank value stops startup) |
 
-**Files:** `src/server.ts`
+**Files:** `src/config/runtime.ts` (validation), `src/server.ts`, `scripts/*.ts`
 
 ### TypeORM Configuration (Legacy)
+Not read by any code. The TypeORM configuration file has been removed; do not set these.
+
 | Variable | Purpose | Required | Default |
 |----------|---------|----------|---------|
-| `DB_HOST` | Database hostname | No | - |
-| `DB_PORT` | Database port | No | - |
-| `DB_USER` | Database username | No | - |
-| `DB_PASS` | Database password | No | - |
-| `DB_NAME` | Database name | No | - |
-
-**Files:** `src/config/CerviTechDbContext.ts`
+| `DB_HOST` | Database hostname (legacy) | No | - |
+| `DB_PORT` | Database port (legacy) | No | - |
+| `DB_USER` | Database username (legacy) | No | - |
+| `DB_PASS` | Database password (legacy) | No | - |
+| `DB_NAME` | Database name (legacy) | No | - |
 
 ### Docker Compose MongoDB
 | Variable | Purpose | Required | Default |
@@ -50,104 +62,108 @@ This document lists all environment variables used in the CerviTech Node.js appl
 
 ---
 
-## 3. Redis Configuration (2)
+## 3. Redis Configuration
 
 | Variable | Purpose | Required | Default |
 |----------|---------|----------|---------|
-| `REDIS_URL` | Redis connection URL | Yes | - |
-| `REDIS_PORT` | Redis port mapping | No | 6379 |
+| `REDIS_URL` | Redis connection URL. Passed by docker-compose, but current application code does not read it (kept pending a decision) | No | - |
+| `REDIS_PORT` | Redis port mapping for the compose `redis` service | No | 6379 |
 
-**Files:** `docker-compose.yml`, Application setup
+**Files:** `docker-compose.yml` only
 
 ---
 
-## 4. JWT & Authentication Secrets (4)
+## 4. JWT & Authentication Secrets
 
 | Variable | Purpose | Required | Default |
 |----------|---------|----------|---------|
-| `JWT_SECRET` | Main JWT signing secret | Yes | `your-secret-key` |
-| `APP_USER_JWT_SECRET` | App user token secret | No | `appuser-secret-key` |
-| `BACKOFFICE_JWT_SECRET` | Back office user token secret | No | `backoffice-secret-key` |
-| `GENERAL_TOKEN_SECRET` | General purpose token secret | No | `general-secret-key` |
+| `JWT_SECRET` | Legacy main JWT secret. In `.env.example` and docker-compose, but current application code does not read it (kept pending a decision) | No | - |
+| `APP_USER_JWT_SECRET` | App user access-token signing secret | Yes (startup) | none |
+| `BACKOFFICE_JWT_SECRET` | Back office user access-token signing secret | Yes (startup) | none |
+| `GENERAL_TOKEN_SECRET` | Signing secret for password-reset and account-deletion tokens | Yes (startup) | none |
 
-**Files:**
-- `src/utils/verifyToken.ts`
-- `src/utils/token.util.ts`
+The three role-specific secrets are validated at startup, together with `MONGODB_URI`, before any connection is opened. A missing or blank value stops startup with exit code 1, and the log names each missing variable without its value; there are no fallback defaults (see "Token security rollout" below). Values are used exactly as configured (not trimmed).
+
+**Files:** `src/config/runtime.ts` (validation), `src/utils/token.util.ts`
 
 ---
 
-## 5. Firebase Cloud Messaging (FCM) (4)
+## 5. Push Notifications
+
+Push notifications are sent through the Expo push service (`src/services/pushNotificationDriver.ts`), which needs no server credential. The old `FCM_SERVER_KEY` and `FCM_API_URL` variables are not read by any code and have been removed.
 
 | Variable | Purpose | Required | Default |
 |----------|---------|----------|---------|
-| `FCM_API_URL` | FCM API endpoint | No | `https://fcm.googleapis.com` |
-| `FCM_SERVER_KEY` | FCM server key for push notifications | Yes | - |
-| `ENV_FCM_API_URL` | Legacy FCM API URL | No | - |
-| `ENV_FCM_SERVER_KEY` | Legacy FCM server key | No | - |
+| `PUSH_ALERT_SLACK_WEBHOOK_URL` | Slack webhook for push-delivery failure alerts; alerts are skipped when unset | No | - |
+| `ENV_FCM_API_URL` | Legacy: read into `ApplicationConstant` in `applicationConstants.ts`, but the value is never used | No | - |
+| `ENV_FCM_SERVER_KEY` | Legacy: read into `ApplicationConstant` in `applicationConstants.ts`, but the value is never used | No | - |
 
-**Files:** `src/services/pushNotificationDriver.ts`, `src/utils/applicationConstants.ts`
+**Files:** `src/services/pushAlert.service.ts`, `src/utils/applicationConstants.ts`
 
 ---
 
-## 6. Email Service Configuration (6)
+## 6. Email Service Configuration
 
 ### Azure Communication Services
 | Variable | Purpose | Required | Default |
 |----------|---------|----------|---------|
-| `ACS_CONNECTION_STRING` | Azure Communication Services connection string | Yes* | - |
-| `SENDER_EMAIL` | Sender email address for ACS | Yes* | - |
+| `ACS_CONNECTION_STRING` | Azure Communication Services connection string | Yes, for email* | - |
+| `SENDER_EMAIL` | Sender email address for ACS | Yes, for email* | - |
 
 ### SMTP/Legacy Email
-| Variable | Purpose | Required | Default |
-|----------|---------|----------|---------|
-| `ENV_CERVITECH_EMAIL` | Email account for sending | No | - |
-| `ENV_CERVITECH_EMAIL_PASSWORD` | Email account password | No | - |
-| `ENV_EMAIL_SERVER_PORT` | SMTP server port | No | - |
+Email is sent only through ACS. These are legacy variables:
 
-### SendGrid (Alternative)
 | Variable | Purpose | Required | Default |
 |----------|---------|----------|---------|
-| `SENDGRID_API_KEY` | SendGrid API key | No | - |
+| `ENV_CERVITECH_EMAIL` | Legacy SMTP account; not read by any code | No | - |
+| `ENV_CERVITECH_EMAIL_PASSWORD` | Legacy SMTP password; not read by any code | No | - |
+| `ENV_EMAIL_SERVER_PORT` | Legacy SMTP port: read into `ApplicationConstant`, but the value is never used | No | - |
+
+### SendGrid
+| Variable | Purpose | Required | Default |
+|----------|---------|----------|---------|
+| `SENDGRID_API_KEY` | SendGrid is not implemented; not read by any code | No | - |
 
 **Files:**
 - `src/utils/EmailService/emailutils.ts`
 - `src/utils/EmailService/emailtemplates.ts`
 - `src/utils/applicationConstants.ts`
 
-*Required if using Azure Communication Services for email
+*Required for email features (signup welcome, password-reset OTP, account deletion, monthly reminder). The API starts without them. The ACS client is created on the first send, and sends fail with an `EmailConfigurationError` if either value is missing or the connection string is malformed. That error never includes the connection string.
 
 ---
 
-## 7. URL Configuration (4)
+## 7. URL Configuration
 
 | Variable | Purpose | Required | Default |
 |----------|---------|----------|---------|
-| `BACKEND_URL` | Backend server base URL (for email templates) | Yes | - |
-| `FRONTEND_URL` | Frontend application URL (for email templates) | Yes | - |
-| `ENV_BASE_URL` | Legacy base URL constant | No | - |
-| `ENV_WEBSITE_APP_URL` | CerviTech website URL | No | - |
+| `BACKEND_URL` | Backend server base URL used in email links | Yes, for email | - |
+| `FRONTEND_URL` | Absolute http(s) frontend URL. Used for email links and as the **only** origin allowed by CORS (credentialed). An invalid value stops startup. If unset, `http://localhost:5173` is allowed outside production, and in production cross-origin browser access is disabled (requests without an `Origin` header, such as the mobile app, are unaffected) | Yes, for browser clients and email | - |
+| `ENV_BASE_URL` | Legacy: read into `ApplicationConstant`, but the value is never used | No | - |
+| `ENV_WEBSITE_APP_URL` | Legacy; not read by any code | No | - |
 
 **Files:**
-- `src/server.ts`
+- `src/config/runtime.ts` (CORS origin)
 - `src/utils/EmailService/emailtemplates.ts`
 - `src/utils/applicationConstants.ts`
 
 ---
 
-## 8a. Google Play Billing (2)
+## 8a. Google Play Billing
 
 | Variable | Purpose | Required | Default |
 |----------|---------|----------|---------|
-| `GOOGLE_PLAY_SERVICE_ACCOUNT_KEY` | JSON key for a Google Cloud service account with Finance/Orders access in Play Console; used to verify purchase tokens against the Android Publisher API | No* | - |
-| `GOOGLE_PLAY_PACKAGE_NAME` | Android package name the subscriptions belong to | No* | - |
+| `GOOGLE_PLAY_SERVICE_ACCOUNT_KEY` | JSON key (single line) for a Google Cloud service account with Finance/Orders access in Play Console; used to verify purchase tokens against the Android Publisher API | Yes, for purchases* | - |
+| `GOOGLE_PLAY_PACKAGE_NAME` | Android package name the subscriptions belong to, e.g. `com.cervitech.app` | Yes, for purchases* | - |
+| `GOOGLE_PLAY_SUBSCRIPTION_IDS` | Comma-separated allowlist of subscription product IDs the server accepts, e.g. `premium_monthly,premium_yearly`; whitespace around commas is ignored | Yes, for purchases* | - |
 
 **Files:** `src/services/googlePlay.service.ts`, `src/jobs/subscriptionSync.job.ts`, `src/services/transaction.service.ts`
 
-*Required only to verify Play purchase tokens (`POST /transaction` with `purchaseToken`) and to run the subscription-sync job. Without it, `POST /transaction` still works via the legacy client-submitted-status path, and the sync job logs a warning and no-ops on each scheduled run.
+*Required to accept payments, not for startup: the API starts without them. `POST /transaction` only accepts a Google Play `purchaseToken` that has been verified server-side. Submissions without one are rejected with `PURCHASE_TOKEN_INVALID` (400), and there is no unverified fallback. If any of the three variables is unset, purchases are rejected with `GOOGLE_PLAY_CONFIGURATION_MISSING` (500), and the 15-minute subscription-sync job logs a warning and skips each run.
 
 ---
 
-## 8. Environment Colors (5)
+## 8. Environment Colors
 
 Used for logging and UI indication of environment status.
 
@@ -163,73 +179,76 @@ Used for logging and UI indication of environment status.
 
 ---
 
-## 9. Application Settings & Constants (12)
+## 9. Application Settings & Constants
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `ENV_TEST` | Test mode flag | `false` |
-| `ENV_NUMBER_OF_RECORD_POST_BEFORE_SENDING_AVERAGE_NECK_ANGLE` | Neck angle records threshold | `0` |
-| `ENV_DEFAULT_PROMPT` | Default AI/ML prompt | - |
-| `ENV_DB_CONN` | Database connection string (legacy) | - |
+| `ENV_TEST` | Legacy test mode flag; not read by any code | - |
+| `ENV_NUMBER_OF_RECORD_POST_BEFORE_SENDING_AVERAGE_NECK_ANGLE` | Neck angle records threshold (positive integer; other values fall back to the default) | `5` |
+| `ENV_DEFAULT_PROMPT` | Legacy: read into `ApplicationConstant`, but the value is never used | - |
+| `ENV_DB_CONN` | Legacy database connection string; not read by any code | - |
+| `OTP_DEBUG` | `true` returns the generated OTP in the reset-request response. Dev/test only | `false` |
+| `REMINDER_JOB_ENABLED` | `false` disables the monthly re-engagement email job and its boot catch-up | enabled |
+| `REMINDER_CRON_SCHEDULE` | Cron schedule (UTC) for the monthly re-engagement email | `0 9 14 * *` |
 
 **Files:**
 - `src/utils/applicationConstants.ts`
 - `src/services/appUserServices/neckAngle.service.ts`
+- `src/services/otp.service.ts`
+- `src/jobs/monthlyReminder.job.ts`
 
 ---
 
 ## Critical Variables for Deployment
 
-**Must be set:**
-1. ✅ `MONGODB_URI` - Database connection
-2. ✅ `REDIS_URL` - Redis cache connection
-3. ✅ `JWT_SECRET` - Authentication key
-4. ✅ `FCM_SERVER_KEY` - Push notifications
-5. ✅ `ACS_CONNECTION_STRING` - Email service
-6. ✅ `SENDER_EMAIL` - Email sender
-7. ✅ `BACKEND_URL` - Backend base URL
-8. ✅ `FRONTEND_URL` - Frontend base URL
+**Required to start** (the API exits with code 1 without them):
+1. ✅ `MONGODB_URI` - Database connection; startup connects before listening
+2. ✅ `APP_USER_JWT_SECRET`, `BACKOFFICE_JWT_SECRET`, `GENERAL_TOKEN_SECRET` - Token signing secrets; blank values stop startup
+
+**Required for specific features** (the API starts without them):
+- `FRONTEND_URL` - Allowed browser origin and email links. Without it, production cross-origin browser access is disabled
+- `ACS_CONNECTION_STRING`, `SENDER_EMAIL`, `BACKEND_URL` - Email delivery
+- `GOOGLE_PLAY_SERVICE_ACCOUNT_KEY`, `GOOGLE_PLAY_PACKAGE_NAME`, `GOOGLE_PLAY_SUBSCRIPTION_IDS` - Accepting purchases
 
 ---
 
 ## Variables by Priority
 
-### Priority 1 (Critical - Application won't run)
-- `MONGODB_URI`
-- `JWT_SECRET`
-- `ACS_CONNECTION_STRING`
-- `SENDER_EMAIL`
+### Priority 1 (Critical - Application won't start)
+- `MONGODB_URI` (startup exits with code 1 if the database is unreachable)
+- `APP_USER_JWT_SECRET`, `BACKOFFICE_JWT_SECRET`, `GENERAL_TOKEN_SECRET` (no fallback defaults)
 
 ### Priority 2 (Important - Features won't work)
-- `REDIS_URL`
-- `FCM_SERVER_KEY`
-- `BACKEND_URL`
-- `FRONTEND_URL`
+- `FRONTEND_URL` (browser clients in production; email links)
+- `ACS_CONNECTION_STRING`, `SENDER_EMAIL`, `BACKEND_URL` (email)
+- `GOOGLE_PLAY_SERVICE_ACCOUNT_KEY`, `GOOGLE_PLAY_PACKAGE_NAME`, `GOOGLE_PLAY_SUBSCRIPTION_IDS` (payments)
 
 ### Priority 3 (Optional - Has defaults)
-- `PORT` (defaults to 4000)
-- `NODE_ENV` (defaults to development)
-- `FCM_API_URL` (defaults to Firebase endpoint)
-- JWT role-specific secrets (have fallback defaults)
+- `PORT` (defaults to 8000)
+- `NODE_ENV` (the Docker image sets `production`; when unset, the localhost CORS fallback applies)
+- `TRUST_PROXY_HOPS` (defaults to 0; set it to the exact proxy count behind a reverse proxy)
+- `LOG_LEVEL`, `OTP_DEBUG`, `REMINDER_JOB_ENABLED`, `REMINDER_CRON_SCHEDULE`, `PUSH_ALERT_SLACK_WEBHOOK_URL`
 - Color constants (have empty string defaults)
-- Email credentials (only if using SMTP instead of ACS)
+
+### Not read by the application
+- `JWT_SECRET`, `REDIS_URL` - In `.env.example` and docker-compose but unused by current code; kept pending a decision
+- The legacy variables marked as such in the sections above
 
 ---
 
 ## Deployment Checklist
 
 - [ ] All Priority 1 variables configured
-- [ ] All Priority 2 variables configured
+- [ ] Priority 2 variables configured for the features this deployment uses
 - [ ] `.env` file created (copy from `.env.example`)
 - [ ] `.env` file added to `.gitignore` and `.dockerignore`
 - [ ] `docker-compose.yml` updated with all variables
 - [ ] Secrets securely stored (not in source control)
-- [ ] Email service configured (ACS or SendGrid)
-- [ ] FCM credentials obtained and set
+- [ ] If sending email: ACS connection string and sender configured
+- [ ] If accepting purchases: Google Play service account, package name and subscription IDs set
 - [ ] JWT secrets are strong and unique
 - [ ] Database credentials are secure
 - [ ] URLs point to correct endpoints
-- [ ] Redis instance is accessible
 
 ---
 
@@ -242,7 +261,7 @@ Used for logging and UI indication of environment status.
 - Use strong, unique values for all secrets
 - Rotate secrets regularly in production
 
-Google Play payments require `GOOGLE_PLAY_SUBSCRIPTION_IDS`: a comma-separated allowlist of subscription product IDs. Legacy status-only payment submissions are rejected. Existing duplicate paymentRef records must be reconciled before creating the unique paymentRef index in production.
+Google Play payments require `GOOGLE_PLAY_SUBSCRIPTION_IDS` (see section 8a). Legacy status-only payment submissions are rejected. Existing duplicate paymentRef records must be reconciled before creating the unique paymentRef index in production.
 
 ### Logging and credential exposure response
 

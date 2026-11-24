@@ -1,84 +1,21 @@
-import express from 'express';
-import morgan from 'morgan';
+// Load environment variables before any module reads them.
+import 'dotenv/config';
+import http from 'node:http';
 import mongoose from 'mongoose';
-import dotenv from 'dotenv';
-import swaggerUi from 'swagger-ui-express';
 import { logger } from './utils/logger';
-import { swaggerSpec } from './config/swagger';
-import cors from 'cors';
-import bodyParser from 'body-parser';
-import backOfficeUser from './routes/backOfficeUser.routes';
-import authRoutes from './routes/auth.routes.js';
-import fcmRoutes from './routes/fcm.routes.js';
-import usersRoutes from './routes/users.routes.js';
-import neckAngleRoutes from './routes/neckAngle.routes';
-import transactionRoutes from './routes/transaction.routes';
-import goalsroutes from './routes/goals.routes.js';
+import { createApp } from './app';
+import { validateStartupConfig } from './config/runtime';
 import { startMonthlyReminderJob, runMonthlyReminderCatchUp } from './jobs/monthlyReminder.job';
 import { startSubscriptionSyncJob } from './jobs/subscriptionSync.job';
 import { startPushReminderJobs } from './jobs/pushReminders.job';
 import { startGoalCycleSummaryJob } from './jobs/goalCycleSummary.job';
 import { startPushReceiptsJob } from './jobs/pushReceipts.job';
-import healthRoutes from './routes/health.routes';
 import AuthRateLimitBucket from './models/AuthRateLimitBucket';
 
-// Load environment variables
-dotenv.config();
+/** Docker's default stop grace period is 10s; exit before SIGKILL arrives. */
+const SHUTDOWN_TIMEOUT_MS = 8000;
 
-const app = express();
-const PORT = process.env.PORT || 4000;
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/cervitechdb';
-const frontendUrl = process.env.FRONTEND_URL;
-const trustProxyHops = process.env.TRUST_PROXY_HOPS ?? '0';
-if (!/^(0|[1-9]\d*)$/.test(trustProxyHops) || !Number.isSafeInteger(Number(trustProxyHops))) {
-  throw new Error('TRUST_PROXY_HOPS must be a non-negative integer.');
-}
-app.set('trust proxy', Number(trustProxyHops));
-
-// Middleware
-app.use(bodyParser.json());
-app.use(express.json());
-app.use(
-  morgan(':method :url :status :response-time ms - :res[content-length]', {
-    stream: logger.stream,
-  })
-);
-
-app.use(
-  cors({
-    origin: 'http://localhost:5173', // frontend URL
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    credentials: true, // if you use cookies or auth headers
-  })
-);
-
-
-// API docs
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
-app.get('/api-docs.json', (req, res) => res.json(swaggerSpec));
-
-// Routes
-app.use('/api/v1/auth', authRoutes);
-app.use('/api/v1/fcm', fcmRoutes);
-app.use('/api/v1/users', usersRoutes);
-app.use('/api/v1/neck-angle', neckAngleRoutes);
-app.use('/api/v1/backoffice-users', backOfficeUser);
-app.use('/api/v1/transaction', transactionRoutes);
-app.use('/api/v1/goals', goalsroutes);
-app.use('/api/v1/health', healthRoutes);
-
-// Connect to MongoDB and start server
-mongoose
-  .connect(MONGODB_URI, {
-    dbName: 'cervitechdb', // 👈 force your app to use "cervitech" database
-  })
-
-  .then(async () => {
-    await AuthRateLimitBucket.init();
-    logger.info('MongoDB connected');
-    app.listen(PORT, () => {
-      logger.info(`Server running on port ${PORT}`);
-    });
+function startBackgroundJobs(): void {
     startMonthlyReminderJob();
     startSubscriptionSyncJob();
     startPushReminderJobs();
@@ -101,9 +38,82 @@ mongoose
           })
         );
     }
-  })
-  .catch((err) => {
-    logger.error('MongoDB connection error:', err);
-  });
+}
 
-export default app;
+function listen(server: http.Server, port: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+}
+
+/**
+ * Starts the API in dependency order. Nothing is served and no job runs until
+ * MongoDB is connected and its startup indexes exist; any failure rejects.
+ */
+export async function startServer(): Promise<http.Server> {
+  // Validate all required configuration (port, MongoDB URI, signing secrets,
+  // proxy and CORS settings) before opening any connection. Importing the app's
+  // modules reads no required values, so failures land here and reach
+  // handleStartupFailure instead of escaping as an import-time exception.
+  const { port, mongoUri } = validateStartupConfig();
+  const app = createApp();
+
+  await mongoose.connect(mongoUri, {
+    dbName: 'cervitechdb', // 👈 force your app to use "cervitech" database
+  });
+  await AuthRateLimitBucket.init();
+  logger.info('MongoDB connected');
+
+  const server = http.createServer(app);
+  await listen(server, port);
+  logger.info(`Server running on port ${port}`);
+
+  startBackgroundJobs();
+  return server;
+}
+
+/**
+ * Single exit path for startup failures. Sets a non-zero exit code and lets
+ * the process drain (so the error log reaches stdout), with a hard exit as a
+ * backstop in case a stray handle would keep a half-started process alive.
+ */
+export async function handleStartupFailure(error: unknown): Promise<void> {
+  logger.error('Server startup failed; exiting', error);
+  process.exitCode = 1;
+  setTimeout(() => process.exit(1), 1000).unref();
+  try {
+    await mongoose.disconnect();
+  } catch {
+    // Best effort: we are exiting regardless.
+  }
+}
+
+export function registerShutdownHandlers(server: http.Server): void {
+  let shuttingDown = false;
+
+  const shutdown = (signal: NodeJS.Signals) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logger.info(`${signal} received; shutting down`);
+    setTimeout(() => process.exit(1), SHUTDOWN_TIMEOUT_MS).unref();
+
+    server.close(() => {
+      mongoose
+        .disconnect()
+        .catch((err) => logger.error('MongoDB disconnect during shutdown failed', err))
+        // Cron schedules keep the event loop alive, so exit explicitly.
+        .finally(() => process.exit(0));
+    });
+  };
+
+  process.once('SIGTERM', shutdown);
+  process.once('SIGINT', shutdown);
+}
+
+if (require.main === module) {
+  startServer().then(registerShutdownHandlers, handleStartupFailure);
+}
