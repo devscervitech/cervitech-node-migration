@@ -21,6 +21,7 @@ import { startSubscriptionSyncJob } from './jobs/subscriptionSync.job';
 import { startPushReminderJobs } from './jobs/pushReminders.job';
 import { startGoalCycleSummaryJob } from './jobs/goalCycleSummary.job';
 import { startPushReceiptsJob } from './jobs/pushReceipts.job';
+import { runExclusive } from './jobs/jobLock';
 import healthRoutes from './routes/health.routes';
 
 // Load environment variables
@@ -82,7 +83,8 @@ mongoose
     startGoalCycleSummaryJob();
     startPushReceiptsJob();
     if (process.env.REMINDER_JOB_ENABLED !== 'false') {
-      runMonthlyReminderCatchUp()
+      runExclusive('monthlyReminder', new Date(), (signal) => runMonthlyReminderCatchUp(new Date(), signal))
+        .then((locked) => locked.outcome === 'ran' ? locked.result : { outcome: 'skipped', sent: 0, failed: 0, totalFound: 0 })
         .then((result) => {
           if (result.outcome === 'ran') {
             logger.info(

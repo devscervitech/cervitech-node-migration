@@ -75,6 +75,22 @@ export class AppUserService {
     }
   }
 
+  /**
+   * B12: makes sure a user whose subscription Play currently reports as
+   * entitled has hasPaid. Unlike grantPaidEntitlement this is a single
+   * conditional write, so it is safe to call on every verification — it only
+   * changes anything when hasPaid was revoked earlier (e.g. account hold
+   * followed by recovery on the same purchase token). Returns true when it
+   * restored the flag.
+   */
+  static async ensurePaidEntitlement(userId: string): Promise<boolean> {
+    const result = await AppUser.updateOne(
+      { _id: userId, hasPaid: { $ne: true } },
+      { $set: { hasPaid: true } }
+    );
+    return result.modifiedCount > 0;
+  }
+
   static async updatePictureUrlAsync(update: PictureUrlUpdateViewModel): Promise<boolean> {
     if (!update || !update.userId) {
       throw new Error('User ID not provided.');
@@ -94,7 +110,6 @@ export class AppUserService {
   static async deleteByIdAsync(id: string): Promise<boolean> {
     try {
       const user = await AppUser.findById(id);
-      console.log(user);
 
       if (!user) {
         throw new CustomException('User does not exist');
@@ -158,10 +173,11 @@ export class AppUserService {
         throw new CustomException('User does not exist');
       }
 
-      const token = TokenUtil.generateToken(user._id.toString(), 'account_deletion');
-      console.log('Generated token:', token);
-
-      console.log('Token before sending email:', token);
+      const token = TokenUtil.generateToken(
+        user._id.toString(),
+        'account_deletion',
+        'APP_USER'
+      );
       await EmailUtils.sendAccountDeletionRequest(normalizedEmail, user.username, token);
 
       return true;
@@ -229,20 +245,10 @@ export class AppUserService {
 
       const endOfDay = new Date(day);
       endOfDay.setHours(23, 59, 59, 999);
-      console.log(
-        'Calculating response rate for userId:',
-        userId,
-        'from',
-        startOfDay,
-        'to',
-        endOfDay
-      );
       const responseRates = await ResponseRate.find({
         appUserId: userId,
         dateCreated: { $gte: startOfDay, $lte: endOfDay },
       });
-
-      console.log('Fetched response rates:', responseRates);
 
       const totalPrompts = responseRates.reduce((sum, r) => sum + (r.prompt || 0), 0);
       const totalResponses = responseRates.reduce((sum, r) => sum + (r.response || 0), 0);

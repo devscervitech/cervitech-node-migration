@@ -4,6 +4,7 @@ const state = vi.hoisted(() => ({
   records: [] as any[],
   grant: vi.fn(async () => ({ hasPaid: true })),
   response: vi.fn(async () => ({ hasPaid: false })),
+  ensure: vi.fn(async () => false),
 }));
 vi.mock('../../src/models/TransactionRecord', () => ({
   default: class {
@@ -20,7 +21,11 @@ vi.mock('../../src/models/TransactionRecord', () => ({
   },
 }));
 vi.mock('../../src/services/appUserServices/appUserService.service', () => ({
-  AppUserService: { grantPaidEntitlement: state.grant, getAppUserResponse: state.response },
+  AppUserService: {
+    grantPaidEntitlement: state.grant,
+    getAppUserResponse: state.response,
+    ensurePaidEntitlement: state.ensure,
+  },
 }));
 vi.mock('../../src/services/googlePlay.service', () => ({
   GooglePlayService: { verifySubscriptionPurchase: vi.fn(async () => ({ status: 'entitled' })) },
@@ -87,6 +92,20 @@ describe('Payment review reproductions', () => {
     await TransactionService.transactionRecords('user-a', payload);
     expect(state.records).toHaveLength(1);
     expect(state.grant).toHaveBeenCalledTimes(1);
+  });
+
+  // B12: an already-granted record that Play verifies as entitled again
+  // (e.g. account hold, then recovery on the same token) must restore
+  // hasPaid if it was revoked in between — the first-grant guard used to
+  // short-circuit that and leave a paying user locked out.
+  it('restores hasPaid on replay of an already-granted, still-entitled purchase', async () => {
+    await TransactionService.transactionRecords('user-a', payload);
+    expect(state.ensure).not.toHaveBeenCalled();
+
+    await TransactionService.transactionRecords('user-a', payload);
+
+    expect(state.grant).toHaveBeenCalledTimes(1); // first grant still runs once
+    expect(state.ensure).toHaveBeenCalledWith('user-a');
   });
 
   // Ensures whitespace around purchase identifiers is removed before

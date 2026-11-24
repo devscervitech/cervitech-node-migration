@@ -1,15 +1,19 @@
 // user.controller.ts
 import { Request, Response } from 'express';
+import type { AutomatePostNeckAngleRecordsViewModel } from '../viewmodels/AutomatePostNeckAngleRecords';
 import { getApiResponseMessages, ApiResponseStatus } from '../utils/apiResponse';
 import { NeckAngleService } from '../services/appUserServices/neckAngle.service';
 import { logger } from '../utils/logger';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
 import { NeckAngleModel } from '../models/NeckAngle';
 import { JobScheduler } from '../services/JobScheduler';
+import {
+  neckAngleBatchSchema,
+  randomNeckAngleBatchSchema,
+} from '../validation/schemas/neckAngle.schema';
 
 export class NeckAngleController {
   static async postBatchNeckAngleRecords(req: AuthenticatedRequest, res: Response): Promise<void> {
-    const model: NeckAngleModel = req.body;
     const userId = req.user?.userId;
 
     if (!userId || req.user?.role !== 'APP_USER') {
@@ -17,11 +21,8 @@ export class NeckAngleController {
       return;
     }
 
-    if (
-      !model ||
-      !Array.isArray(model.neckAngleRecords) ||
-      model.neckAngleRecords.length === 0
-    ) {
+    const { error, value } = neckAngleBatchSchema.validate(req.body);
+    if (error) {
       res.status(400).json({
         statusCode: 400,
         message: 'BadRequest',
@@ -32,10 +33,15 @@ export class NeckAngleController {
 
     try {
       const scopedModel: NeckAngleModel = {
-        ...model,
-        appUserId: userId,
+        neckAngleRecords: value.neckAngleRecords.map(
+          (record: { angle: number; dateTimeRecorded: Date }) =>
+            ({
+              appUserId: userId,
+              angle: record.angle,
+              dateTimeRecorded: record.dateTimeRecorded,
+            })
+        ),
       };
-      for (const record of scopedModel.neckAngleRecords) record.appUserId = userId;
       logger.info('Neck-angle batch received.', { userId, recordCount: scopedModel.neckAngleRecords.length });
       const data = await NeckAngleService.postBatchNeckAngleRecordAsync(scopedModel);
       res.status(200).json({
@@ -74,6 +80,40 @@ export class NeckAngleController {
     }
   }
 
+  static async postRandomTestBatchNeckAngleRecords(req: Request, res: Response): Promise<void> {
+    const { error, value } = randomNeckAngleBatchSchema.validate(req.body);
+    if (error) {
+      res.status(400).json({
+        statusCode: 400,
+        message: 'BadRequest',
+        data: null,
+      });
+      return;
+    }
+
+    try {
+      const model: AutomatePostNeckAngleRecordsViewModel = value;
+      logger.info('Random neck-angle test batch requested.', {
+        appUserId: model.appUserId,
+        numberOfRecords: model.numberOfRecords,
+      });
+      const data = await NeckAngleService.postRandomBatchNeckAngleRecordForTestAsync(model);
+      res.status(200).json({
+        statusCode: 200,
+        message: 'Successful',
+        data,
+      });
+    } catch (error: unknown) {
+      const err = error instanceof Error ? error : new Error('Custom error');
+      logger.error(err.message);
+
+      res.status(500).json({
+        statusCode: 500,
+        message: err.message,
+        data: null,
+      });
+    }
+  }
   // static async sendPushNotificationMessageForAverageNeckAngle(req: Request, res: Response): Promise<void> {
   //   const responses = getApiResponseMessages();
 

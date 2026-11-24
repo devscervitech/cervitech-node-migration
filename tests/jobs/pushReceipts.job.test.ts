@@ -1,149 +1,145 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const logFind = vi.fn();
+const find = vi.fn();
+const bulkWrite = vi.fn();
 const getReceipts = vi.fn();
-const clearToken = vi.fn();
-const notifyFailure = vi.fn();
+const clearInvalidTokens = vi.fn();
+const notifyPushFailure = vi.fn();
+const cursors: any[] = [];
 
 vi.mock('../../src/models/PushNotificationLog', () => ({
-  PushNotificationLog: { find: (...args: unknown[]) => logFind(...args) },
+  PushNotificationLog: {
+    find: (...args: unknown[]) => find(...args),
+    bulkWrite: (...args: unknown[]) => bulkWrite(...args),
+  },
 }));
-
 vi.mock('../../src/services/pushNotificationDriver', () => ({
   PushNotificationDriver: { getReceipts: (...args: unknown[]) => getReceipts(...args) },
-  clearInvalidToken: (...args: unknown[]) => clearToken(...args),
+  clearInvalidTokens: (...args: unknown[]) => clearInvalidTokens(...args),
 }));
-
 vi.mock('../../src/services/pushAlert.service', () => ({
-  notifyPushFailure: (...args: unknown[]) => notifyFailure(...args),
+  notifyPushFailure: (...args: unknown[]) => notifyPushFailure(...args),
 }));
+vi.mock('../../src/jobs/jobLock', () => ({ scheduleExclusiveJob: vi.fn() }));
 
-import { runPushReceiptPolling } from '../../src/jobs/pushReceipts.job';
+import { runPushReceiptPolling, RECEIPT_BATCH_SIZE } from '../../src/jobs/pushReceipts.job';
 
-const NOW = new Date('2026-08-14T12:00:00Z');
-const pendingLog = (ticketId: string, extra: object = {}) => {
-  const log = {
-    _id: ticketId,
-    token: 'ExponentPushToken[abc]',
-    title: 'Goal reminder',
-    dataType: 'goal_reminder',
-    ticketId,
-    status: 'pending',
-    deliveredAt: undefined as Date | undefined,
-    error: undefined as string | undefined,
-    save: vi.fn().mockResolvedValue(undefined),
-    ...extra,
+const NOW = new Date('2026-11-19T17:00:00Z');
+const log = (id: number, extra: Record<string, unknown> = {}) => ({
+  _id: `log-${id}`,
+  ticketId: `ticket-${id}`,
+  token: `ExponentPushToken[${id}]`,
+  title: `title-${id}`,
+  dataType: 'test',
+  ...extra,
+});
+const makeCursor = (items: any[]) => {
+  const cursor = {
+    async *[Symbol.asyncIterator]() {
+      for (const item of items) yield item;
+    },
+    close: vi.fn(async () => undefined),
   };
-  return log;
+  cursors.push(cursor);
+  return cursor;
 };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  cursors.length = 0;
+  const expired: any[] = [];
+  const pending: any[] = [];
+  find.mockImplementation((filter: any) => {
+    const query: any = {
+      select: () => query,
+      cursor: (options: unknown) => {
+        query.cursorOptions = options;
+        return makeCursor(filter.sentAt.$gt ? pending : expired);
+      },
+    };
+    return query;
+  });
+  (find as any).setResults = (expiredItems: any[], pendingItems: any[]) => {
+    expired.splice(0, expired.length, ...expiredItems);
+    pending.splice(0, pending.length, ...pendingItems);
+  };
+  bulkWrite.mockResolvedValue({});
+  getReceipts.mockResolvedValue({});
+  clearInvalidTokens.mockResolvedValue(undefined);
+  notifyPushFailure.mockResolvedValue(undefined);
 });
 
 describe('runPushReceiptPolling', () => {
-  it('marks pending logs as delivered when Expo confirms delivery', async () => {
-    const log = pendingLog('t1');
-    logFind.mockResolvedValueOnce([]).mockResolvedValueOnce([log]);
-    getReceipts.mockResolvedValue({ t1: { status: 'ok', id: 't1' } });
-
-    const processed = await runPushReceiptPolling(NOW);
-
-    expect(processed).toBe(1);
-    expect(log.status).toBe('delivered');
-    expect(log.deliveredAt).toEqual(NOW);
-    expect(log.save).toHaveBeenCalled();
-    expect(notifyFailure).not.toHaveBeenCalled();
-  });
-
-  it('marks DeviceNotRegistered as failed, clears the token, and raises an alert', async () => {
-    const log = pendingLog('t1');
-    logFind.mockResolvedValueOnce([]).mockResolvedValueOnce([log]);
-    getReceipts.mockResolvedValue({
-      t1: {
-        status: 'error',
-        message: 'DeviceNotRegistered',
-        details: { error: 'DeviceNotRegistered' },
-      },
-    });
-
-    const processed = await runPushReceiptPolling(NOW);
-
-    expect(processed).toBe(1);
-    expect(log.status).toBe('failed');
-    expect(log.error).toBe('DeviceNotRegistered');
-    expect(clearToken).toHaveBeenCalledWith('ExponentPushToken[abc]');
-    expect(notifyFailure).toHaveBeenCalledWith(expect.stringContaining('1 push(es) not delivered'));
-  });
-
-  it('keeps logs awaiting Expo confirmation untouched', async () => {
-    const log = pendingLog('t1');
-    logFind.mockResolvedValueOnce([]).mockResolvedValueOnce([log]);
-    getReceipts.mockResolvedValue({});
-
-    const processed = await runPushReceiptPolling(NOW);
-
-    expect(processed).toBe(1);
-    expect(log.status).toBe('pending');
-    expect(log.save).not.toHaveBeenCalled();
-    expect(notifyFailure).not.toHaveBeenCalled();
-  });
-
-  it('does nothing when there are no pending logs', async () => {
-    logFind.mockResolvedValue([]);
-
-    const processed = await runPushReceiptPolling(NOW);
-
-    expect(processed).toBe(0);
-    expect(getReceipts).not.toHaveBeenCalled();
-  });
-
-  it('only polls logs older than the receipts grace period but younger than the 24h window', async () => {
-    logFind.mockResolvedValue([]);
-
-    await runPushReceiptPolling(NOW);
-
-    expect(logFind).toHaveBeenCalledWith({
-      status: 'pending',
-      ticketId: { $exists: true },
-      sentAt: { $lte: expect.any(Date) },
-    });
-    expect(logFind).toHaveBeenCalledWith({
-      status: 'pending',
-      ticketId: { $exists: true },
-      sentAt: { $gt: expect.any(Date), $lte: expect.any(Date) },
-    });
-  });
-
-  it('closes pending entries past Expo\u2019s 24h window as failed without polling them', async () => {
-    const expiredLog = pendingLog('old-ticket');
-    logFind.mockResolvedValueOnce([expiredLog]).mockResolvedValueOnce([]);
-
-    const processed = await runPushReceiptPolling(NOW);
-
-    expect(processed).toBe(1);
-    expect(expiredLog.status).toBe('failed');
-    expect(expiredLog.error).toBe('receipt window expired');
-    expect(expiredLog.save).toHaveBeenCalled();
-    expect(getReceipts).not.toHaveBeenCalled();
-    expect(notifyFailure).toHaveBeenCalledWith(expect.stringContaining('receipt window expired'));
-  });
-
-  it('counts expired windows in the same alert as confirmed failures', async () => {
-    const expiredLog = pendingLog('old-ticket');
-    const failedLog = pendingLog('t1');
-    logFind.mockResolvedValueOnce([expiredLog]).mockResolvedValueOnce([failedLog]);
-    getReceipts.mockResolvedValue({
-      t1: { status: 'error', message: 'MessageTooBig', details: { error: 'MessageTooBig' } },
-    });
-
-    await runPushReceiptPolling(NOW);
-
-    expect(notifyFailure).toHaveBeenCalledTimes(1);
-    expect(notifyFailure).toHaveBeenCalledWith(expect.stringContaining('MessageTooBig'));
-    expect(notifyFailure).toHaveBeenCalledWith(
-      expect.stringContaining('receipt window expired')
+  it('streams expired and pending logs in bounded cursors and closes both cursors', async () => {
+    (find as any).setResults(
+      [log(1), log(2)],
+      [log(3), log(4, { ticketId: '' })]
     );
-    expect(getReceipts).toHaveBeenCalledWith(['t1']);
+
+    const evaluated = await runPushReceiptPolling(NOW);
+
+    expect(evaluated).toBe(4);
+    expect(find).toHaveBeenCalledTimes(2);
+    expect(cursors).toHaveLength(2);
+    expect(cursors.every((cursor) => cursor.close.mock.calls.length === 1)).toBe(true);
+    expect(bulkWrite).toHaveBeenCalledTimes(1); // expired entries only
+    expect(bulkWrite.mock.calls[0][0]).toHaveLength(2);
+    expect(getReceipts).toHaveBeenCalledWith(['ticket-3']);
+    expect(notifyPushFailure).toHaveBeenCalledWith(
+      expect.stringContaining('2 push(es) abandoned (receipt window expired)')
+    );
+  });
+
+  it('updates delivery/error states in bulk and clears invalid tokens once', async () => {
+    (find as any).setResults([], [log(1), log(2), log(3)]);
+    getReceipts.mockResolvedValue({
+      'ticket-1': { status: 'ok' },
+      'ticket-2': { status: 'error', details: { error: 'DeviceNotRegistered' } },
+    });
+
+    expect(await runPushReceiptPolling(NOW)).toBe(3);
+    expect(bulkWrite).toHaveBeenCalledTimes(1);
+    expect(bulkWrite.mock.calls[0][0]).toEqual([
+      {
+        updateOne: {
+          filter: { _id: 'log-1', status: 'pending' },
+          update: { $set: { status: 'delivered', deliveredAt: NOW } },
+        },
+      },
+      {
+        updateOne: {
+          filter: { _id: 'log-2', status: 'pending' },
+          update: { $set: { status: 'failed', error: 'DeviceNotRegistered' } },
+        },
+      },
+    ]);
+    expect(clearInvalidTokens).toHaveBeenCalledWith(['ExponentPushToken[2]']);
+    expect(notifyPushFailure).toHaveBeenCalledWith(expect.stringContaining('1 push(es) not delivered'));
+  });
+
+  it('splits a large pending scan into Expo-sized bounded batches', async () => {
+    const pending = Array.from({ length: RECEIPT_BATCH_SIZE + 1 }, (_, index) => log(index));
+    (find as any).setResults([], pending);
+
+    expect(await runPushReceiptPolling(NOW)).toBe(pending.length);
+    expect(getReceipts).toHaveBeenCalledTimes(2);
+    expect(getReceipts.mock.calls.map((call) => call[0].length)).toEqual([RECEIPT_BATCH_SIZE, 1]);
+  });
+
+  it('aborts before polling the next batch when the lease is lost', async () => {
+    const controller = new AbortController();
+    const abortingCursor = {
+      async *[Symbol.asyncIterator]() {
+        yield log(1);
+        controller.abort(new Error('lease lost'));
+        yield log(2);
+      },
+      close: vi.fn(async () => undefined),
+    };
+    find.mockImplementationOnce(() => ({ select: () => ({ cursor: () => makeCursor([]) }) }));
+    find.mockImplementationOnce(() => ({ select: () => ({ cursor: () => abortingCursor }) }));
+    await expect(runPushReceiptPolling(NOW, controller.signal)).rejects.toThrow('lease lost');
+    expect(getReceipts).not.toHaveBeenCalled();
+    expect(abortingCursor.close).toHaveBeenCalled();
   });
 });

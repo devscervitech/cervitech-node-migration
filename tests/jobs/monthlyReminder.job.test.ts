@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const jobRunCreate = vi.fn();
 const jobRunFindOne = vi.fn();
+const jobRunFindOneAndUpdate = vi.fn();
 const jobRunUpdateOne = vi.fn();
 const appUserFind = vi.fn();
 const sendReminderEmail = vi.fn();
@@ -10,6 +11,7 @@ vi.mock('../../src/models/JobRun', () => ({
   default: {
     create: (...args: unknown[]) => jobRunCreate(...args),
     findOne: (...args: unknown[]) => jobRunFindOne(...args),
+    findOneAndUpdate: (...args: unknown[]) => jobRunFindOneAndUpdate(...args),
     updateOne: (...args: unknown[]) => jobRunUpdateOne(...args),
   },
 }));
@@ -27,10 +29,21 @@ import { runMonthlyReminder, runMonthlyReminderCatchUp, monthKeyOf } from '../..
 const NOW = new Date('2026-08-14T09:00:00Z');
 
 const inactiveUser = (email: string, username: string) => ({ email, username });
+const userCursor = (users: any[]) => {
+  const cursor = {
+    async *[Symbol.asyncIterator]() {
+      for (const user of users) yield user;
+    },
+    close: vi.fn(async () => undefined),
+  };
+  const query: any = { lean: () => query, cursor: () => cursor };
+  return query;
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
   jobRunUpdateOne.mockResolvedValue(undefined);
+  jobRunFindOneAndUpdate.mockResolvedValue(null);
 });
 
 describe('monthKeyOf', () => {
@@ -44,10 +57,10 @@ describe('monthKeyOf', () => {
 describe('runMonthlyReminder', () => {
   it('emails every inactive user and finalizes the run as completed', async () => {
     jobRunCreate.mockResolvedValue({ _id: 'run-1', status: 'running', startedAt: NOW });
-    appUserFind.mockResolvedValue([
+    appUserFind.mockReturnValue(userCursor([
       inactiveUser('a@x.com', 'alice'),
       inactiveUser('b@x.com', 'bob'),
-    ]);
+    ]));
     sendReminderEmail.mockResolvedValue({});
 
     const result = await runMonthlyReminder(NOW);
@@ -59,18 +72,22 @@ describe('runMonthlyReminder', () => {
       status: 'running',
       startedAt: NOW,
     });
-    expect(appUserFind).toHaveBeenCalledWith({
-      email: { $exists: true, $ne: null },
-      $or: [
-        { lastLoginDateTime: { $lt: expect.any(Date) } },
-        { lastLoginDateTime: { $exists: false } },
-      ],
-    });
+    expect(appUserFind).toHaveBeenCalledWith(
+      {
+        email: { $exists: true, $type: 'string', $gt: '' },
+        deleted: { $ne: true }, // B12: soft-deleted users get no re-engagement email
+        $or: [
+          { lastLoginDateTime: { $lt: expect.any(Date) } },
+          { lastLoginDateTime: { $exists: false } },
+        ],
+      },
+      { email: 1, username: 1 }
+    );
     expect(sendReminderEmail).toHaveBeenCalledTimes(2);
     expect(sendReminderEmail).toHaveBeenCalledWith('a@x.com', 'alice');
     expect(sendReminderEmail).toHaveBeenCalledWith('b@x.com', 'bob');
     expect(jobRunUpdateOne).toHaveBeenCalledWith(
-      { _id: 'run-1' },
+      { _id: 'run-1', status: 'running' },
       expect.objectContaining({
         $set: expect.objectContaining({
           status: 'completed',
@@ -84,7 +101,7 @@ describe('runMonthlyReminder', () => {
 
   it('skips the month when the ledger already has a run record (duplicate key)', async () => {
     jobRunCreate.mockRejectedValue({ code: 11000 });
-    appUserFind.mockResolvedValue([inactiveUser('a@x.com', 'alice')]);
+    appUserFind.mockReturnValue(userCursor([inactiveUser('a@x.com', 'alice')]));
 
     const result = await runMonthlyReminder(NOW);
 
@@ -96,10 +113,10 @@ describe('runMonthlyReminder', () => {
 
   it('counts a failed send without aborting the rest of the batch', async () => {
     jobRunCreate.mockResolvedValue({ _id: 'run-1', status: 'running', startedAt: NOW });
-    appUserFind.mockResolvedValue([
+    appUserFind.mockReturnValue(userCursor([
       inactiveUser('a@x.com', 'alice'),
       inactiveUser('b@x.com', 'bob'),
-    ]);
+    ]));
     sendReminderEmail.mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('SMTP down'));
 
     const result = await runMonthlyReminder(NOW);
@@ -107,22 +124,45 @@ describe('runMonthlyReminder', () => {
     expect(result).toEqual({ outcome: 'ran', totalFound: 2, sent: 1, failed: 1 });
     expect(sendReminderEmail).toHaveBeenCalledTimes(2);
     expect(jobRunUpdateOne).toHaveBeenCalledWith(
-      { _id: 'run-1' },
+      { _id: 'run-1', status: 'running' },
       expect.objectContaining({
         $set: expect.objectContaining({ status: 'completed', sent: 1, failed: 1 }),
       })
     );
   });
 
+  it('sends with bounded concurrency (at most 10 emails in flight)', async () => {
+    jobRunCreate.mockResolvedValue({ _id: 'run-1', status: 'running', startedAt: NOW });
+    appUserFind.mockReturnValue(
+      userCursor(Array.from({ length: 25 }, (_, i) => inactiveUser(`u${i}@x.com`, `u${i}`)))
+    );
+    let inFlight = 0;
+    let peak = 0;
+    sendReminderEmail.mockImplementation(async () => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      inFlight--;
+      return {};
+    });
+
+    const result = await runMonthlyReminder(NOW);
+
+    expect(result).toEqual({ outcome: 'ran', totalFound: 25, sent: 25, failed: 0 });
+    expect(peak).toBe(10);
+  });
+
   it('marks the run as failed and rethrows when the user query fails', async () => {
     jobRunCreate.mockResolvedValue({ _id: 'run-1', status: 'running', startedAt: NOW });
-    appUserFind.mockRejectedValue(new Error('db down'));
+    appUserFind.mockImplementation(() => {
+      throw new Error('db down');
+    });
 
     await expect(runMonthlyReminder(NOW)).rejects.toThrow('db down');
 
     expect(sendReminderEmail).not.toHaveBeenCalled();
     expect(jobRunUpdateOne).toHaveBeenCalledWith(
-      { _id: 'run-1' },
+      { _id: 'run-1', status: 'running' },
       expect.objectContaining({
         $set: expect.objectContaining({ status: 'failed', errorSummary: 'db down' }),
       })
@@ -138,7 +178,7 @@ describe('runMonthlyReminderCatchUp', () => {
   it('runs the month when the ledger has no record yet', async () => {
     jobRunFindOne.mockResolvedValue(null);
     jobRunCreate.mockResolvedValue({ _id: 'run-1', status: 'running', startedAt: NOW });
-    appUserFind.mockResolvedValue([]);
+    appUserFind.mockReturnValue(userCursor([]));
 
     const result = await runMonthlyReminderCatchUp(NOW);
 
@@ -167,23 +207,23 @@ describe('runMonthlyReminderCatchUp', () => {
 
   it('retries an abandoned running record through the dedupe-safe create path', async () => {
     jobRunFindOne.mockResolvedValue(staleRunning());
-    jobRunCreate.mockResolvedValue({ _id: 'run-2', status: 'running', startedAt: NOW });
-    appUserFind.mockResolvedValue([inactiveUser('a@x.com', 'alice')]);
+    jobRunFindOneAndUpdate.mockResolvedValue({ _id: 'run-1', status: 'running', startedAt: NOW });
+    appUserFind.mockReturnValue(userCursor([inactiveUser('a@x.com', 'alice')]));
 
     const result = await runMonthlyReminderCatchUp(NOW);
 
     expect(result).toEqual({ outcome: 'ran', totalFound: 1, sent: 1, failed: 0 });
-    expect(jobRunUpdateOne).toHaveBeenCalledWith(
-      { _id: 'run-1' },
+    expect(jobRunFindOneAndUpdate).toHaveBeenCalledWith(
+      { _id: 'run-1', status: 'running', startedAt: { $lte: expect.any(Date) } },
       expect.objectContaining({
-        $set: expect.objectContaining({ status: 'failed', errorSummary: 'abandoned; retried' }),
-      })
+        $set: { startedAt: NOW },
+        $unset: expect.objectContaining({ errorSummary: '' }),
+      }),
+      { new: true }
     );
-    expect(jobRunCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ job: 'monthlyReminder', monthKey: '2026-08', status: 'running' })
-    );
+    expect(jobRunCreate).not.toHaveBeenCalled();
     expect(jobRunUpdateOne).toHaveBeenLastCalledWith(
-      { _id: 'run-2' },
+      { _id: 'run-1', status: 'running' },
       expect.objectContaining({
         $set: expect.objectContaining({ status: 'completed', totalFound: 1, sent: 1, failed: 0 }),
       })
