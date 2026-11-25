@@ -248,7 +248,16 @@ export class AuthService {
 
     user.lastLoginDateTime = new Date();
     user.mobileChannel = mobileChannel;
-    await user.save();
+
+    // validateModifiedOnly, because a plain save() re-validates every path on
+    // the document: one stale field written by an older version of the app is
+    // then enough to reject a login whose password has already verified. That
+    // is exactly what `prompt: 0` records did once `min: 1` was added to
+    // AppUserSchema (see scripts/migrate-app-user-prompt.ts) -- a 500 on
+    // correct credentials for every pre-existing account. Signing in must not
+    // depend on fields it never touches. The three paths set above are still
+    // validated; untouched ones are left to the migration.
+    await user.save({ validateModifiedOnly: true });
 
     const token = TokenUtil.generateAppUserToken(user);
 
