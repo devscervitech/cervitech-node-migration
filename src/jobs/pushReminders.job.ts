@@ -4,6 +4,8 @@ import { NeckAngleRecordModel } from '../models/NeckAngleRecord';
 import { PushNotificationDriver } from '../services/pushNotificationDriver';
 import { PushNotificationModelDTO } from '../types/pushNotificationModel.types';
 import { logger } from '../utils/logger';
+import { getLatestGoalsByUserIds } from '../services/goalLookup.service';
+import { isValidTargetedAverageNeckAngle } from '../services/goalCycle';
 
 // Throttling: never re-send the same nudge to the same user more often
 // than this, regardless of how often the cron itself runs.
@@ -168,18 +170,18 @@ export const startGoalProgressJob = () => {
         deleted: { $ne: true },
       });
 
+      const latestGoals = await getLatestGoalsByUserIds(
+        candidates.map((user) => String(user._id))
+      );
       const windowStart = new Date(Date.now() - RECENT_WINDOW_MINUTES * 60 * 1000);
       const messages: PushNotificationModelDTO[] = [];
       const dueUsers: (typeof candidates)[number][] = [];
 
       for (const user of candidates) {
-        if (!isDue(user.lastGoalReminderSentAt, GOAL_PROGRESS_COOLDOWN_HOURS)) continue;
+        if (!isDue(user.lastGoalProgressSentAt, GOAL_PROGRESS_COOLDOWN_HOURS)) continue;
 
-        const goals = [...(user.goals ?? [])].sort(
-          (a, b) => new Date(b.dateSet).getTime() - new Date(a.dateSet).getTime()
-        );
-        const target = goals[0]?.targetedAverageNeckAngle;
-        if (!target) continue;
+        const target = latestGoals.get(String(user._id))?.targetedAverageNeckAngle;
+        if (!isValidTargetedAverageNeckAngle(target)) continue;
 
         const recent = await NeckAngleRecordModel.find({
           appUserId: user._id.toString(),
@@ -209,7 +211,7 @@ export const startGoalProgressJob = () => {
       await Promise.all(
         dueUsers.map((u, i) => {
           if (!results.delivered[i]) return Promise.resolve();
-          u.lastGoalReminderSentAt = new Date();
+          u.lastGoalProgressSentAt = new Date();
           return u.save();
         })
       );

@@ -51,7 +51,7 @@ The app-user limits are: signup 5/hour; login 10/15 minutes; reset request 5/15 
 
 ## Goals (`/api/v1/goals`)
 
-- POST `/turn-on` — auth+role `APP_USER` — `GoalController.turnOnGoalByUserId` — body: `targetedAverageNeckAngle, frequency`
+- POST `/turn-on` — auth+role `APP_USER` — `GoalController.turnOnGoalByUserId` — body: `targetedAverageNeckAngle` (>0 and ≤90) and `frequency` (`DAILY` or `WEEKLY`)
 - PUT `/turn-off` — auth+role `APP_USER` — `GoalController.turnOffGoalByUserId` — body: goal data
 - GET `/user-goals` — auth+role `APP_USER` — `GoalController.getGoalsByUserId`
 - GET `/neck-angle` — auth+role `APP_USER` — `GoalController.getCurrentTargetedAverageNeckAngle`

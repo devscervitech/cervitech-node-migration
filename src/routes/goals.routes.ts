@@ -18,18 +18,7 @@ const router = Router();
  *       content:
  *         application/json:
  *           schema:
- *             type: object
- *             required: [targetedAverageNeckAngle, frequency]
- *             properties:
- *               targetedAverageNeckAngle:
- *                 type: number
- *               frequency:
- *                 type: string
- *                 description: GOAL_FREQUENCY enum value
- *               goalCycleCompletionReports:
- *                 type: array
- *                 items:
- *                   type: object
+ *             $ref: '#/components/schemas/GoalTurnOnRequest'
  *     responses:
  *       201:
  *         description: Goal turned on
@@ -43,7 +32,7 @@ const router = Router();
  *                 message:
  *                   type: string
  *       400:
- *         description: Missing/invalid goal data, or failed to turn on
+ *         description: Invalid target or unsupported frequency
  *       401:
  *         description: Not authenticated
  *       403:
@@ -100,7 +89,7 @@ router.put('/turn-off', authenticateJWT, authorizeRole('APP_USER'), GoalControll
  *       - bearerAuth: []
  *     responses:
  *       200:
- *         description: Goals found, or an empty array when no completed goal history exists
+ *         description: Server-computed goal-cycle reports, or an empty array when no reports exist
  *         content:
  *           application/json:
  *             schema:

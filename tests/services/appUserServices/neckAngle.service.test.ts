@@ -9,9 +9,13 @@ const recordSave = vi.fn();
 const compareAverage = vi.fn();
 const sendPush = vi.fn();
 const responseRateSave = vi.fn();
+const responseRateFind = vi.fn();
+const goalReportFindOne = vi.fn();
+const getLatestGoal = vi.fn();
 
 interface StoredUser {
   _id: string;
+  username?: string;
   prompt?: number;
   fcmToken?: string;
   allowPushNotifications?: boolean;
@@ -50,19 +54,38 @@ vi.mock('../../../src/models/NeckAngleRecord', () => {
 });
 
 vi.mock('../../../src/utils/utils', () => ({
-  Utils: { compareAverageNeckAngle: (...args: unknown[]) => compareAverage(...args) },
+  Utils: {
+    compareAverageNeckAngle: (...args: unknown[]) => compareAverage(...args),
+    currentDayAverageNeckAngleTextReport: vi.fn(() => ''),
+    getColorTag: vi.fn(() => 'GREEN'),
+  },
+}));
+
+vi.mock('../../../src/models/GoalCycleCompletionReport', () => ({
+  GoalCycleCompletionReport: {
+    findOne: (...args: unknown[]) => goalReportFindOne(...args),
+  },
+}));
+
+vi.mock('../../../src/services/goalLookup.service', () => ({
+  getLatestGoal: (...args: unknown[]) => getLatestGoal(...args),
 }));
 
 vi.mock('../../../src/services/pushNotificationDriver', () => ({
   PushNotificationDriver: { sendPushNotification: (...args: unknown[]) => sendPush(...args) },
 }));
 
-vi.mock('../../../src/models/ResponseRate', () => ({
-  default: vi.fn(function (this: any, fields: unknown) {
+vi.mock('../../../src/models/ResponseRate', () => {
+  const ctor = vi.fn(function (this: any, fields: unknown) {
     Object.assign(this, fields as object);
     this.save = responseRateSave;
-  }),
-}));
+  });
+  return {
+    default: Object.assign(ctor, {
+      find: (...args: unknown[]) => responseRateFind(...args),
+    }),
+  };
+});
 
 import { NeckAngleService } from '../../../src/services/appUserServices/neckAngle.service';
 
@@ -79,7 +102,11 @@ beforeEach(() => {
 
   userFindById.mockImplementation((idOrFilter: string | { _id: string }) => {
     const id = typeof idOrFilter === 'string' ? idOrFilter : idOrFilter._id;
-    return Promise.resolve(users.get(id) ?? null);
+    const result = Promise.resolve(users.get(id) ?? null) as Promise<StoredUser | null> & {
+      exec?: () => Promise<StoredUser | null>;
+    };
+    result.exec = () => result;
+    return result;
   });
   userFind.mockImplementation((filter: { _id?: string }) =>
     Promise.resolve([...users.values()].filter((u) => !filter._id || u._id === filter._id))
@@ -90,6 +117,7 @@ beforeEach(() => {
     return { sort: () => Promise.resolve(last) };
   });
   recordFind.mockReturnValue({
+    exec: () => Promise.resolve([]),
     sort: () => ({
       limit: () => ({
         then: (onFulfilled: (r: unknown) => unknown) =>
@@ -232,4 +260,36 @@ it('uses the default prompt for existing signup accounts with zero', async () =>
   compareAverage.mockResolvedValue(['title', 'body']);
   await NeckAngleService.postBatchNeckAngleRecordAsync(batch('u1', 5));
   expect(sendPush).toHaveBeenCalledTimes(1);
+});
+
+describe('computeNeckAngleParameters goal lookup', () => {
+  it('uses the shared latest goal and reads that goal’s newest server report', async () => {
+    users.set('u1', { _id: 'u1', username: 'user1' });
+    recordFind.mockReturnValue({ exec: vi.fn().mockResolvedValue([]) });
+    responseRateFind.mockResolvedValue([]);
+    getLatestGoal.mockResolvedValue({
+      _id: 'goal-latest',
+      frequency: 'WEEKLY',
+      targetedAverageNeckAngle: 74,
+    });
+    const report = {
+      actualAverageNeckAngle: 68,
+      complianceInPercentage: 91.9,
+      dateOfConcludedCycle: new Date('2026-08-16T00:00:00.000Z'),
+    };
+    const sortReport = vi.fn().mockReturnValue({ exec: vi.fn().mockResolvedValue(report) });
+    goalReportFindOne.mockReturnValue({ sort: sortReport });
+
+    const result = await NeckAngleService.computeNeckAngleParameters('u1');
+
+    expect(getLatestGoal).toHaveBeenCalledWith('u1');
+    expect(goalReportFindOne).toHaveBeenCalledWith({ goalId: 'goal-latest' });
+    expect(sortReport).toHaveBeenCalledWith({ dateOfConcludedCycle: -1, _id: -1 });
+    expect(result.lastSetGoalWithDetails).toMatchObject({
+      frequency: 'WEEKLY',
+      targetedAverageNeckAngle: 74,
+      actualAverageNeckAngle: 68,
+      complianceInPercentage: 91.9,
+    });
+  });
 });

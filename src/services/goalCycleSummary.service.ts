@@ -2,8 +2,10 @@ import AppUser from '../models/AppUser';
 import { Goal } from '../models/Goal';
 import { NeckAngleRecordModel } from '../models/NeckAngleRecord';
 import { GoalCycleCompletionReport } from '../models/GoalCycleCompletionReport';
+import { GOAL_FREQUENCY } from '../enums/goalFrequency';
 import { PushNotificationDriver } from './pushNotificationDriver';
 import { logger } from '../utils/logger';
+import { getLatestGoal } from './goalLookup.service';
 import {
   CycleFrequency,
   advanceCycleEndsAt,
@@ -45,8 +47,15 @@ function mostRecentConcludedEnd(
  * Returns the number of cycles concluded.
  */
 export async function runGoalCycleSummary(now: Date = new Date()): Promise<number> {
-  const withMarker = await Goal.find({ nextCycleEndsAt: { $exists: true, $lte: now } });
-  const withoutMarker = await Goal.find({ nextCycleEndsAt: { $exists: false } });
+  const supportedFrequencies = [GOAL_FREQUENCY.DAILY, GOAL_FREQUENCY.WEEKLY];
+  const withMarker = await Goal.find({
+    frequency: { $in: supportedFrequencies },
+    nextCycleEndsAt: { $exists: true, $ne: null, $lte: now },
+  });
+  const withoutMarker = await Goal.find({
+    frequency: { $in: supportedFrequencies },
+    nextCycleEndsAt: { $exists: false },
+  });
   let concluded = 0;
 
   for (const goal of [...withMarker, ...withoutMarker]) {
@@ -70,10 +79,8 @@ export async function runGoalCycleSummary(now: Date = new Date()): Promise<numbe
         continue;
       }
 
-      const newestGoal = await Goal.findOne({ appUserId: user._id })
-        .sort({ dateSet: -1 })
-        .select('_id');
-      if (newestGoal && newestGoal._id.toString() !== goal._id.toString()) {
+      const newestGoal = await getLatestGoal(String(user._id));
+      if (newestGoal && String(newestGoal._id) !== String(goal._id)) {
         if (markerIsStale) {
           await Goal.updateOne({ _id: goal._id }, { $set: { nextCycleEndsAt: cycleEndsAt } });
         }

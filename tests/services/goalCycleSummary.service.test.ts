@@ -71,7 +71,7 @@ describe('runGoalCycleSummary', () => {
       allowPushNotifications: true,
     });
     findOne.mockReturnValue({
-      sort: () => ({ select: () => Promise.resolve({ _id: 'g1' }) }),
+      sort: () => ({ select: () => ({ exec: () => Promise.resolve({ _id: 'g1' }) }) }),
     });
     recordFind.mockResolvedValue([
       { angle: 70, dateTimeRecorded: new Date('2026-08-12T10:00:00Z') },
@@ -82,6 +82,14 @@ describe('runGoalCycleSummary', () => {
     const concluded = await runGoalCycleSummary(NOW);
 
     expect(concluded).toBe(1);
+    expect(Goal.find).toHaveBeenNthCalledWith(1, {
+      frequency: { $in: ['DAILY', 'WEEKLY'] },
+      nextCycleEndsAt: { $exists: true, $ne: null, $lte: NOW },
+    });
+    expect(Goal.find).toHaveBeenNthCalledWith(2, {
+      frequency: { $in: ['DAILY', 'WEEKLY'] },
+      nextCycleEndsAt: { $exists: false },
+    });
     expect(GoalCycleCompletionReport).toHaveBeenCalledWith({
       actualAverageNeckAngle: 80,
       complianceInPercentage: 100,
@@ -158,7 +166,9 @@ describe('runGoalCycleSummary', () => {
       fcmToken: 'ExponentPushToken[abc]',
       allowPushNotifications: true,
     });
-    findOne.mockReturnValue({ sort: () => ({ select: () => Promise.resolve({ _id: 'g2' }) }) });
+    findOne.mockReturnValue({
+      sort: () => ({ select: () => ({ exec: () => Promise.resolve({ _id: 'g2' }) }) }),
+    });
 
     const concluded = await runGoalCycleSummary(NOW);
 
@@ -186,7 +196,9 @@ describe('runGoalCycleSummary', () => {
       fcmToken: undefined,
       allowPushNotifications: true,
     });
-    findOne.mockReturnValue({ sort: () => ({ select: () => Promise.resolve({ _id: 'g1' }) }) });
+    findOne.mockReturnValue({
+      sort: () => ({ select: () => ({ exec: () => Promise.resolve({ _id: 'g1' }) }) }),
+    });
     recordFind.mockResolvedValue([
       { angle: 80, dateTimeRecorded: new Date('2026-08-13T10:00:00Z') },
     ]);
@@ -227,7 +239,9 @@ describe('runGoalCycleSummary', () => {
       fcmToken: 'ExponentPushToken[abc]',
       allowPushNotifications: true,
     });
-    findOne.mockReturnValue({ sort: () => ({ select: () => Promise.resolve({ _id: 'g1' }) }) });
+    findOne.mockReturnValue({
+      sort: () => ({ select: () => ({ exec: () => Promise.resolve({ _id: 'g1' }) }) }),
+    });
     recordFind.mockResolvedValue([]);
 
     const concluded = await runGoalCycleSummary(NOW);
@@ -263,7 +277,9 @@ describe('runGoalCycleSummary', () => {
       fcmToken: 'ExponentPushToken[abc]',
       allowPushNotifications: true,
     });
-    findOne.mockReturnValue({ sort: () => ({ select: () => Promise.resolve({ _id: 'g1' }) }) });
+    findOne.mockReturnValue({
+      sort: () => ({ select: () => ({ exec: () => Promise.resolve({ _id: 'g1' }) }) }),
+    });
     recordFind.mockResolvedValue([
       { angle: 72, dateTimeRecorded: new Date('2026-08-12T10:00:00Z') },
     ]);

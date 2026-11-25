@@ -2,6 +2,18 @@ import { GOAL_FREQUENCY } from '../enums/goalFrequency';
 import { PushNotificationModelDTO } from '../types/pushNotificationModel.types';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+// The app's neck-angle score is scaled to 90 degrees (also used by its
+// response-rate calculation and generated sample data).
+export const MAX_TARGETED_AVERAGE_NECK_ANGLE = 90;
+
+export function isValidTargetedAverageNeckAngle(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isFinite(value) &&
+    value > 0 &&
+    value <= MAX_TARGETED_AVERAGE_NECK_ANGLE
+  );
+}
 
 export type CycleFrequency = 'DAILY' | 'WEEKLY';
 

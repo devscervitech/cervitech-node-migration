@@ -2,7 +2,6 @@ import mongoose, { Schema, Document } from 'mongoose';
 import { IUser } from './userFields';
 import { MOBILE_CHANNEL } from '../enums/mobileChannel';
 import { INeckAngleRecord, NeckAngleRecordSchema } from './NeckAngleRecord';
-import { IGoal, GoalSchema } from './Goal';
 
 export interface IAppUser extends IUser {
   fcmToken: string;
@@ -13,7 +12,6 @@ export interface IAppUser extends IUser {
   isGoalOn: boolean;
   responseRate: number;
   neckAngleRecords: INeckAngleRecord[];
-  goals: IGoal[];
   mobileChannel: MOBILE_CHANNEL; // Now uses number enum
   prompt: number;
   notificationCount?: number;
@@ -22,6 +20,7 @@ export interface IAppUser extends IUser {
   deleted: boolean;
   dateRegistered: Date; // Keep as Date type
   lastGoalReminderSentAt?: Date;
+  lastGoalProgressSentAt?: Date;
   lastCheckInReminderSentAt?: Date;
   lastBadPostureAlertSentAt?: Date;
 }
@@ -45,8 +44,6 @@ const AppUserSchema: Schema = new Schema<IAppUser>({
 
   neckAngleRecords: [NeckAngleRecordSchema],
 
-  goals: [GoalSchema],
-
   mobileChannel: {
     type: Number, 
     enum: Object.values(MOBILE_CHANNEL).filter(val => typeof val === 'number'), 
@@ -56,6 +53,7 @@ const AppUserSchema: Schema = new Schema<IAppUser>({
   notificationCount: { type: Number },
   deleted: { type: Boolean, default: false },
   lastGoalReminderSentAt: { type: Date },
+  lastGoalProgressSentAt: { type: Date },
   lastCheckInReminderSentAt: { type: Date },
   lastBadPostureAlertSentAt: { type: Date },
 }, { timestamps: true });

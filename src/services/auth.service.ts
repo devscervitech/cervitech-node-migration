@@ -27,7 +27,7 @@ import { DateLibrary } from '../utils/dateLibrary.js';
 import { OtpService } from './otp.service.js';
 import { EmailUtils } from '../utils/EmailService/emailutils.js';
 import { AuthValidation } from '../validation/authValidation.js';
-import { Goal } from '../models/Goal.js';
+import { getLatestGoal } from './goalLookup.service.js';
 import { toAppUserViewModel } from '../viewmodels/AppUser.viewmodel.js';
 import { normalizePassword, verifyPasswordInput } from '../utils/password.util.js';
 import { passwordPolicySchema } from '../validation/schemas/auth.schema.js';
@@ -86,7 +86,6 @@ export class AuthService {
         isGoalOn: false,
         responseRate: 0,
         neckAngleRecords: [],
-        goals: [],
         mobileChannel: userData.mobileChannel || MOBILE_CHANNEL.WEB,
         prompt: 5,
         notificationCount: 0,
@@ -254,7 +253,7 @@ export class AuthService {
     const token = TokenUtil.generateAppUserToken(user);
 
     let currentTargetedAverageNeckAngle = 0;
-    const lastSetGoal = await Goal.findOne({ appUserId: user._id });
+    const lastSetGoal = await getLatestGoal(String(user._id));
     if (lastSetGoal) {
       currentTargetedAverageNeckAngle = lastSetGoal.targetedAverageNeckAngle;
     }
