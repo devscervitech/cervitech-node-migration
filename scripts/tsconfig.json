@@ -1,0 +1,24 @@
+// Nothing in scripts/ was covered by a tsconfig, so editors opened these
+// files as standalone and resolved no @types/node -- every `process.env`
+// read showed "Cannot find name 'process'". Worse, `npm run typecheck`
+// (tsconfig.test.json) did not include the directory either, so these
+// scripts were never typechecked at all. They connect directly to a database
+// and mutate production data, so a type error here is strictly worse than one
+// in src/ -- it surfaces only when someone runs the migration for real.
+//
+// Editors walk up from the open file and find this config. CI covers the same
+// files through "scripts" in tsconfig.test.json's include.
+//
+// Scripts are deliberately NOT part of tsconfig.build.json: they run from
+// source through tsx and must stay out of dist/.
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    // The root config emits src/ to dist/ and so sets rootDir to ./src, but
+    // these scripts import from ../src. Widen it to the repo root and disable
+    // emit -- nothing here is ever compiled.
+    "rootDir": "..",
+    "noEmit": true
+  },
+  "include": ["."]
+}
