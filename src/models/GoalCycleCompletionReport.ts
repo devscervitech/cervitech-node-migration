@@ -14,6 +14,8 @@ export const GoalCycleCompletionReportSchema = new Schema<IGoalCycleCompletionRe
   goalId: { type: Schema.Types.ObjectId, ref: 'Goal' },
 });
 
+GoalCycleCompletionReportSchema.index({ goalId: 1, dateOfConcludedCycle: -1, _id: -1 });
+
 export const GoalCycleCompletionReport = mongoose.model<IGoalCycleCompletionReport>(
   'GoalCycleCompletionReport',
   GoalCycleCompletionReportSchema

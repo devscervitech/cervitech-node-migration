@@ -62,7 +62,10 @@
     "swagger-ui-express": "^5.0.1",
     "winston": "^3.17.0"
   },
+  "overrides": {
+    "gaxios": "^7.3.1"
+  },
   "engines": {
-    "node": "22.x"
+    "node": "^24.0.0"
   }
 }

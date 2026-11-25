@@ -1,16 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { getAllGoalsByIdAsync } = vi.hoisted(() => ({
+const { getAllGoalsByIdAsync, turnOnGoalAsync } = vi.hoisted(() => ({
   getAllGoalsByIdAsync: vi.fn(),
+  turnOnGoalAsync: vi.fn(),
 }));
 
 vi.mock('../../src/services/goal.service', () => ({
   GoalService: {
     getAllGoalsByIdAsync,
+    turnOnGoalAsync,
   },
 }));
 
 import { GoalController } from '../../src/controllers/goal.controller';
+import { swaggerSpec } from '../../src/config/swagger';
 
 const makeRes = () => {
   const res: any = { statusCode: 0, body: null };
@@ -31,6 +34,86 @@ const makeRes = () => {
 beforeEach(() => {
   vi.clearAllMocks();
   getAllGoalsByIdAsync.mockReset();
+  turnOnGoalAsync.mockReset();
+});
+
+describe('GoalController.turnOnGoalByUserId', () => {
+  it('documents the same request schema used by controller validation', () => {
+    const operation = (swaggerSpec as any).paths['/goals/turn-on'].post;
+    const requestSchema = (swaggerSpec as any).components.schemas.GoalTurnOnRequest;
+
+    expect(operation.requestBody.content['application/json'].schema).toEqual({
+      $ref: '#/components/schemas/GoalTurnOnRequest',
+    });
+    expect(requestSchema.required).toEqual(
+      expect.arrayContaining(['targetedAverageNeckAngle', 'frequency'])
+    );
+    expect(requestSchema.properties.targetedAverageNeckAngle.maximum).toBe(90);
+    expect(requestSchema.properties.frequency.enum).toEqual(['DAILY', 'WEEKLY']);
+  });
+
+  it.each([
+    { targetedAverageNeckAngle: 60, frequency: 'Daily' },
+    { targetedAverageNeckAngle: 60, frequency: 'MONTHLY' },
+    { targetedAverageNeckAngle: 0, frequency: 'DAILY' },
+    { targetedAverageNeckAngle: -1, frequency: 'WEEKLY' },
+    { targetedAverageNeckAngle: 91, frequency: 'WEEKLY' },
+    { targetedAverageNeckAngle: Number.NaN, frequency: 'DAILY' },
+    { targetedAverageNeckAngle: Number.POSITIVE_INFINITY, frequency: 'DAILY' },
+    { targetedAverageNeckAngle: '60', frequency: 'DAILY' },
+  ])('rejects invalid goal data: %o', async (body) => {
+    const res = makeRes();
+
+    await GoalController.turnOnGoalByUserId(
+      { user: { userId: 'user-1' }, body } as any,
+      res
+    );
+
+    expect(res.statusCode).toBe(400);
+    expect(turnOnGoalAsync).not.toHaveBeenCalled();
+  });
+
+  it('accepts the upper target boundary', async () => {
+    turnOnGoalAsync.mockResolvedValue(true);
+    const res = makeRes();
+
+    await GoalController.turnOnGoalByUserId(
+      {
+        user: { userId: 'user-1' },
+        body: { targetedAverageNeckAngle: 90, frequency: 'WEEKLY' },
+      } as any,
+      res
+    );
+
+    expect(res.statusCode).toBe(201);
+    expect(turnOnGoalAsync).toHaveBeenCalledWith('user-1', {
+      targetedAverageNeckAngle: 90,
+      frequency: 'WEEKLY',
+    });
+  });
+
+  it('discards client-authored completion reports while preserving compatibility with older clients', async () => {
+    turnOnGoalAsync.mockResolvedValue(true);
+    const res = makeRes();
+
+    await GoalController.turnOnGoalByUserId(
+      {
+        user: { userId: 'user-1' },
+        body: {
+          targetedAverageNeckAngle: 60,
+          frequency: 'DAILY',
+          goalCycleCompletionReports: [{ complianceInPercentage: 100 }],
+        },
+      } as any,
+      res
+    );
+
+    expect(res.statusCode).toBe(201);
+    expect(turnOnGoalAsync).toHaveBeenCalledWith('user-1', {
+      targetedAverageNeckAngle: 60,
+      frequency: 'DAILY',
+    });
+  });
 });
 
 describe('GoalController.getGoalsByUserId', () => {

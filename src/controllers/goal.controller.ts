@@ -4,10 +4,10 @@ import { SetGoalViewModel, TurnOnGoalViewModel } from '../types/goal.types';
 import { logger } from '../utils/logger';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
 import { CustomException } from '../utils/customException';
+import { goalTurnOnSchema } from '../validation/schemas/goal.schema';
 
 export class GoalController {
   static async turnOnGoalByUserId(req: AuthenticatedRequest, res: Response): Promise<void> {
-    const model: SetGoalViewModel = req.body;
     const appUserId = req.user?.userId;
 
     if (!appUserId) {
@@ -19,18 +19,30 @@ export class GoalController {
       return;
     }
 
-    if (!model || typeof model.targetedAverageNeckAngle !== 'number' || !model.frequency) {
+    // Validate only the supported goal fields. Older app builds may still
+    // include client-generated report data, but it is discarded here.
+    const validation = goalTurnOnSchema.validate({
+      targetedAverageNeckAngle: req.body?.targetedAverageNeckAngle,
+      frequency: req.body?.frequency,
+    });
+    if (validation.error) {
       logger.warn('turn-on goal rejected: invalid or incomplete request body', {
         userId: appUserId,
-        targetedAverageNeckAngle: model?.targetedAverageNeckAngle,
-        frequency: model?.frequency,
-        hasGoalCycleCompletionReports: Array.isArray(model?.goalCycleCompletionReports),
+        targetedAverageNeckAngle: req.body?.targetedAverageNeckAngle,
+        frequency: req.body?.frequency,
       });
       res.status(400).json({
-        error: 'Goal data with valid user ID is required (targetedAverageNeckAngle and frequency).',
+        error: 'A target greater than 0 and at most 90, and frequency DAILY or WEEKLY, are required.',
       });
       return;
     }
+
+    // Construct the service input from the validated fields. Any legacy
+    // client-supplied report data is intentionally discarded.
+    const model: SetGoalViewModel = {
+      targetedAverageNeckAngle: validation.value.targetedAverageNeckAngle,
+      frequency: validation.value.frequency,
+    };
 
     try {
       const result = await GoalService.turnOnGoalAsync(appUserId, model);
@@ -49,7 +61,6 @@ export class GoalController {
         userId: appUserId,
         targetedAverageNeckAngle: model.targetedAverageNeckAngle,
         frequency: model.frequency,
-        reportCount: model.goalCycleCompletionReports?.length ?? 0,
       });
       res.status(201).json({ success: true, message: 'Goal turned on' });
     } catch (error) {
