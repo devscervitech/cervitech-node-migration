@@ -1,5 +1,18 @@
 {
     "cSpell.words": [
         "alphanum"
-    ]
+    ],
+    // Use the TypeScript in node_modules (5.9.2) rather than the copy bundled
+    // with the editor. Without this the editor typechecks with a different,
+    // newer compiler than `npm run typecheck` and CI do, so it reports things
+    // that are not errors for this project -- the `moduleResolution=node10 is
+    // deprecated` notice about TypeScript 7.0 being the current example, which
+    // 5.9.2 does not emit and CI therefore passes straight through.
+    //
+    // Editor and CI disagreeing about what counts as an error is the same
+    // trap as the Node 22-vs-26 mismatch: one of them is wrong and you cannot
+    // tell which from the red squiggle. Pinning both to one compiler means a
+    // problem in the editor is a problem in CI, and vice versa.
+    "typescript.tsdk": "node_modules/typescript/lib",
+    "typescript.enablePromptUseWorkspaceTsdk": true
 }
