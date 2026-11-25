@@ -249,22 +249,15 @@ export class AuthService {
     user.lastLoginDateTime = new Date();
     user.mobileChannel = mobileChannel;
 
-    // Targeted update rather than user.save(). save() re-validates every path
-    // on the document, so a single stale field written by an older version of
-    // the app is enough to reject a login whose password has already verified
-    // -- which is exactly what `prompt: 0` records did once `min: 1` was added
-    // to AppUserSchema (see scripts/migrate-app-user-prompt.ts). Signing in
-    // must not depend on the rest of the record being valid. updateOne does
-    // not run validators by default and writes only the fields named here.
-    const loginUpdate: Record<string, unknown> = {
-      lastLoginDateTime: user.lastLoginDateTime,
-      mobileChannel: user.mobileChannel,
-    };
-    if (passwordCheck.needsRehash) {
-      loginUpdate.password = user.password;
-    }
-
-    await AppUser.updateOne({ _id: user._id }, { $set: loginUpdate });
+    // validateModifiedOnly, because a plain save() re-validates every path on
+    // the document: one stale field written by an older version of the app is
+    // then enough to reject a login whose password has already verified. That
+    // is exactly what `prompt: 0` records did once `min: 1` was added to
+    // AppUserSchema (see scripts/migrate-app-user-prompt.ts) -- a 500 on
+    // correct credentials for every pre-existing account. Signing in must not
+    // depend on fields it never touches. The three paths set above are still
+    // validated; untouched ones are left to the migration.
+    await user.save({ validateModifiedOnly: true });
 
     const token = TokenUtil.generateAppUserToken(user);
 
