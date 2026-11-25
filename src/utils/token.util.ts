@@ -4,17 +4,16 @@ import type { IAppUser } from "../models/AppUser";
 import type { IBackofficeUser } from "../models/BackOfficeUser";
 import AppUser from "../models/AppUser";
 import BackofficeUser from "../models/BackOfficeUser";
+import { readSigningSecret } from "../config/runtime";
 import dotenv from "dotenv";
 dotenv.config();
 
-function requiredSecret(name: string): string {
-  const value = process.env[name];
-  if (!value?.trim()) throw new Error(`Missing required signing secret: ${name}`);
-  return value;
-}
-const APP_USER_SECRET = requiredSecret('APP_USER_JWT_SECRET');
-const BACKOFFICE_SECRET = requiredSecret('BACKOFFICE_JWT_SECRET');
-const GENERAL_TOKEN_SECRET = requiredSecret('GENERAL_TOKEN_SECRET');
+// Secrets are read when a token is signed or verified, not at import, so a
+// missing value cannot throw while the app's modules load. Startup validates
+// all three first (validateStartupConfig) and refuses to start without them.
+const appUserSecret = () => readSigningSecret("APP_USER_JWT_SECRET");
+const backofficeSecret = () => readSigningSecret("BACKOFFICE_JWT_SECRET");
+const generalTokenSecret = () => readSigningSecret("GENERAL_TOKEN_SECRET");
 export class InvalidTokenError extends Error {}
 
 export interface BaseTokenPayload {
@@ -80,7 +79,7 @@ export class TokenUtil {
       username: user.username,
       email: user.email,
     };
-    return jwt.sign(payload, APP_USER_SECRET, { expiresIn: "2h" });
+    return jwt.sign(payload, appUserSecret(), { expiresIn: "2h" });
   }
 
   // 🔹 Backoffice Auth Token
@@ -92,7 +91,7 @@ export class TokenUtil {
       email: user.email,
       accessLevel: user.accessLevel,
     };
-    return jwt.sign(payload, BACKOFFICE_SECRET, { expiresIn: "2h" });
+    return jwt.sign(payload, backofficeSecret(), { expiresIn: "2h" });
   }
 
   // General-purpose Token (for password reset, account deletion, etc.)
@@ -102,7 +101,7 @@ export class TokenUtil {
     purpose,
   };
   if (email) payload.email = email;
-  return jwt.sign(payload, GENERAL_TOKEN_SECRET, { expiresIn: "30m", audience: `${realm}:${purpose}` });
+  return jwt.sign(payload, generalTokenSecret(), { expiresIn: "30m", audience: `${realm}:${purpose}` });
 }
 
 static verifyToken(
@@ -110,9 +109,10 @@ static verifyToken(
   expectedPurpose: GeneralTokenPurpose,
   realm: "APP_USER" | "BACKOFFICE_USER" = "APP_USER"
 ): { userId: string; purpose: GeneralTokenPurpose; email?: string } {
+  const secret = generalTokenSecret();
   let decoded: { userId: string; purpose?: GeneralTokenPurpose; email?: string };
   try {
-    decoded = jwt.verify(token, GENERAL_TOKEN_SECRET, { audience: `${realm}:${expectedPurpose}` }) as {
+    decoded = jwt.verify(token, secret, { audience: `${realm}:${expectedPurpose}` }) as {
       userId: string;
       purpose?: GeneralTokenPurpose;
       email?: string;
@@ -149,7 +149,7 @@ static async verifyUserTokenWithAccount(
     if (!decoded || !isUserTokenRole(decoded.role)) throw new Error("Invalid token structure");
 
     const secret =
-      decoded.role === "BACKOFFICE_USER" ? BACKOFFICE_SECRET : APP_USER_SECRET;
+      decoded.role === "BACKOFFICE_USER" ? backofficeSecret() : appUserSecret();
 
     payload = jwt.verify(token, secret) as BaseTokenPayload;
     if (payload.role !== decoded.role) throw new Error("Invalid token structure");

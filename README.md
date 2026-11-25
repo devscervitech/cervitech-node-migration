@@ -39,6 +39,8 @@ npx dotenv -e .env.prod -- npx tsx scripts/grant-premium.ts
 
 This script directly updates the `AppUser` document and does not add a `TransactionRecord`, so it will not be counted as a payment or later revoked by reconciliation logic.
 
-Use npm with Node.js 20.19+ (CI uses Node 22): `npm ci`, then `npm run typecheck && npm test && npm run build`. Commit package-lock.json with dependency changes.
+Use npm with Node.js 24.x (CI and the Docker image use Node 24): `npm ci`, then `npm run typecheck && npm test && npm run build`. Commit package-lock.json with dependency changes.
+
+`package.json` overrides `gaxios` to `^7.3.1` (same major). `googleapis-common@8.0.3` and `gcp-metadata@8.1.4` pin `gaxios@7.1.3`, which pulled in an unused `rimraf@5` → `glob@10` → `minimatch@9` chain with known advisories. Remove the override once `googleapis` is upgraded to a release that no longer pins `gaxios@7.1.3` (180.0.0 and later depend on `googleapis-common@^9`).
 
 Transaction timestamps use the existing `createdOn` and `updatedOn` names, maintained by Mongoose. Existing `createdAt`/`updatedAt` fields in MongoDB are not migrated or deleted by this cleanup. Audit historical records before any separate timestamp backfill. `deletedOn` remains an optional deletion marker.
