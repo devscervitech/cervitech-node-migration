@@ -21,6 +21,7 @@ import {
   backofficeVerifyResetOtpSchema,
   backofficeResetPasswordSchema,
 } from '../validation/schemas/backOfficeUser.schema';
+import { goalTurnOnSchema } from '../validation/schemas/goal.schema';
 
 // Request-body schemas are derived from the same Joi schemas the controllers
 // validate against at runtime, so the docs can't drift from actual behavior.
@@ -55,6 +56,7 @@ const definition: swaggerJSDoc.OAS3Definition = {
       AppUserResetRequest: fromJoi(appUserResetRequestSchema),
       AppUserVerifyResetOtpRequest: fromJoi(appUserVerifyResetOtpSchema),
       TransactionRequest: fromJoi(transactionSchema),
+      GoalTurnOnRequest: fromJoi(goalTurnOnSchema),
       CreateBackofficeUserRequest: fromJoi(createBackofficeUserSchema),
       UpdateBackofficeProfileRequest: fromJoi(updateBackofficeProfileSchema),
       UpdateBackofficeAccessRequest: fromJoi(updateBackofficeAccessSchema),
@@ -85,9 +87,11 @@ const definition: swaggerJSDoc.OAS3Definition = {
 
 const options: swaggerJSDoc.Options = {
   definition,
-  // Comments survive `tsc` (removeComments is off), so scanning the .ts
-  // sources works whether the server runs via tsx (dev) or dist/*.js (prod).
-  apis: ['./src/routes/*.ts', './dist/routes/*.js'],
+  // Read only the route tree used by this runtime. Scanning both made stale
+  // compiled routes reappear in docs while development tests loaded src.
+  apis: process.env.NODE_ENV === 'production'
+    ? ['./dist/routes/*.js']
+    : ['./src/routes/*.ts'],
 };
 
 export const swaggerSpec = swaggerJSDoc(options);

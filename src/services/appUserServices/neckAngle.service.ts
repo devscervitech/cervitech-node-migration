@@ -15,8 +15,8 @@ import ResponseRate from '../../models/ResponseRate';
 import { PushNotificationDriver } from '../pushNotificationDriver';
 import { Utils } from '../../utils/utils';
 import { AutomatePostNeckAngleRecordsViewModel } from '../../viewmodels/AutomatePostNeckAngleRecords';
-import { Goal } from '../../models/Goal';
 import { GoalCycleCompletionReport } from '../../models/GoalCycleCompletionReport';
+import { getLatestGoal } from '../goalLookup.service';
 import { GOAL_FREQUENCY } from '../../enums/goalFrequency';
 
 import { NeckAngleParametersViewModel } from '../../viewmodels/NeckAngleParameters.viewmodel';
@@ -365,17 +365,12 @@ export class NeckAngleService {
         records.length === 0 ? 0 : +(totalPoint / records.length).toFixed(2);
 
       // last goals
-      const lastGoals = await Goal.find({ appUserId: userId })
-        .sort({ _id: -1 })
-        .limit(2)
-        .lean()
-        .exec();
+      const latestGoal = await getLatestGoal(String(userId));
       let lastSetGoalWithDetails: GoalCycleReportViewModel | null = null;
-      if (lastGoals && lastGoals.length > 0) {
-        const g = lastGoals[0] as any;
+      if (latestGoal) {
         lastSetGoalWithDetails = {
-          frequency: g.frequency,
-          targetedAverageNeckAngle: g.targetedAverageNeckAngle,
+          frequency: latestGoal.frequency,
+          targetedAverageNeckAngle: latestGoal.targetedAverageNeckAngle,
           actualAverageNeckAngle: null,
           complianceInPercentage: null,
           dateOfConcludedCycle: null,
@@ -383,8 +378,8 @@ export class NeckAngleService {
           colorTag: null,
         };
 
-        const goalReport = await GoalCycleCompletionReport.findOne({ goalId: g._id })
-          .sort({ _id: -1 })
+        const goalReport = await GoalCycleCompletionReport.findOne({ goalId: latestGoal._id })
+          .sort({ dateOfConcludedCycle: -1, _id: -1 })
           .exec();
         if (goalReport) {
           lastSetGoalWithDetails.actualAverageNeckAngle = goalReport.actualAverageNeckAngle;
