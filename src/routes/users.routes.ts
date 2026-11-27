@@ -86,6 +86,69 @@ router.get('/response-rate', authenticateJWT, authorizeRole('BACKOFFICE_USER'), 
 
 
 
+// ---------------------------------------------------------------------------
+// ORDERING IS LOAD-BEARING: every literal /users/<word> route must be
+// registered ABOVE the `/:id` route below.
+//
+// Express matches in registration order and `/:id` matches any single path
+// segment, so `/:id` will swallow `/users/me` if it is registered first --
+// the handler becomes dead code and the caller gets the back-office guard's
+// "Access denied. Only BACKOFFICE_USERs are allowed." instead. That is
+// exactly what GET /users/me did before this route existed, and it is why
+// the mobile client concluded the whole /users surface was back-office only.
+//
+// The two-segment /me/... routes further down are not affected, which is why
+// this went unnoticed. A regex constraint on `/:id` would be the sturdier
+// fix, but path-to-regexp 8 (Express 5) removed custom match patterns, so
+// `'/:id([0-9a-fA-F]{24})'` throws at startup. Ordering is the only tool.
+// ---------------------------------------------------------------------------
+
+/**
+ * @openapi
+ * /users/me:
+ *   get:
+ *     tags: [User]
+ *     summary: Get the authenticated user's own profile
+ *     description: >
+ *       Returns the caller's own record, including `hasPaid`. The account is
+ *       taken from the bearer token, so there is no path or query parameter.
+ *       The payload matches the login response's `data` object minus `token`,
+ *       letting a client refresh session state without signing out and in.
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Profile retrieved
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/ApiSuccessResponse'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       $ref: '#/components/schemas/AppUserProfile'
+ *       401:
+ *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       403:
+ *         description: Authenticated app-user token required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
+ *       404:
+ *         description: Account not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiErrorResponse'
+ */
+router.get('/me', authenticateJWT, authorizeRole('APP_USER'), UserController.getMe);
+
 /**
  * @openapi
  * /users/{id}:

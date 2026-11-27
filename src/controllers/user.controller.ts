@@ -10,7 +10,7 @@ import { logger } from '../utils/logger';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
 import TokenBlacklist from '../models/TokenBlacklist';
 import { CustomException } from '../utils/customException';
-import { sendSuccess, sendError } from '../utils/apiResponse';
+import { sendSuccess, sendError, requireAuthenticatedUserId } from '../utils/apiResponse';
 import { singleString } from '../utils/compat.util';
 
 export class UserController {
@@ -93,6 +93,17 @@ export class UserController {
   // -------------------------
   // Check deletion-request token (safe, non-destructive)
   // -------------------------
+  //
+  // 400 here is deliberate, and is NOT the 401 that auth.middleware.ts
+  // returns for a bad session token. These two routes are unauthenticated by
+  // design: the token arrives as a path parameter from an email link, not as
+  // a session credential. There is no session to expire and nothing to sign
+  // in to, so the failure is a bad request, not a failed authentication.
+  //
+  // The message is also distinct from the middleware's "Invalid or expired
+  // token." All four of these paths used to return that exact string with a
+  // 400, so the same words reached clients as 400, 401 and 403 depending on
+  // the route -- anything matching on the message classified them wrongly.
   static async checkDeletionRequest(req: Request, res: Response): Promise<void> {
     const token = (req.params.token as string) ?? (req.query.token as string) ?? req.body.Token ?? req.body.token;
     if (!token) {
@@ -109,14 +120,14 @@ export class UserController {
 
       const decoded = TokenUtil.verifyToken(token, 'account_deletion');
       if (!decoded?.userId) {
-        sendError(res, 400, 'Invalid or expired token.');
+        sendError(res, 400, 'This account-deletion link is invalid or has expired.');
         return;
       }
 
       sendSuccess(res, { valid: true, pending: true }, 'Token is valid; deletion is pending confirmation.', 200);
     } catch (error: any) {
       logger.error('CheckDeletionRequest Error:', error);
-      sendError(res, 400, 'Invalid or expired token.');
+      sendError(res, 400, 'This account-deletion link is invalid or has expired.');
     }
   }
 
@@ -139,7 +150,7 @@ export class UserController {
 
       const decoded = TokenUtil.verifyToken(token, 'account_deletion');
       if (!decoded?.userId) {
-        sendError(res, 400, 'Invalid or expired token.');
+        sendError(res, 400, 'This account-deletion link is invalid or has expired.');
         return;
       }
 
@@ -150,7 +161,7 @@ export class UserController {
       else sendError(res, 404, 'Account not found.');
     } catch (error: any) {
       logger.error('ConfirmDeleteMyAccount Error:', error);
-      sendError(res, 400, 'Invalid or expired token.');
+      sendError(res, 400, 'This account-deletion link is invalid or has expired.');
     }
   }
 
@@ -252,6 +263,27 @@ export class UserController {
       res.status(200).json({ success: true, data: user });
     } catch (error: any) {
       logger.error('GetByEmail Error:', error);
+      if (error instanceof CustomException) sendError(res, 404, error.message);
+      else sendError(res, 500, 'Internal server error.');
+    }
+  }
+
+  // -------------------------
+  // Get the authenticated caller's own profile
+  // -------------------------
+  //
+  // The id comes from req.user, which authenticateJWT populates from the
+  // current stored record -- never from a param, query or body. A caller
+  // cannot aim this at another account.
+  static async getMe(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const userId = requireAuthenticatedUserId(req, res);
+    if (!userId) return;
+
+    try {
+      const profile = await GetUserDataService.getOwnProfile(userId);
+      sendSuccess(res, profile, 'User profile retrieved successfully.', 200);
+    } catch (error: any) {
+      logger.error('GetMe Error:', error);
       if (error instanceof CustomException) sendError(res, 404, error.message);
       else sendError(res, 500, 'Internal server error.');
     }
