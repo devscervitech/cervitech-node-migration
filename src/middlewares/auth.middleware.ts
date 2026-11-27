@@ -19,6 +19,24 @@ export interface AuthenticatedRequest extends Request {
   };
 }
 
+/**
+ * Status contract for every guard in this file. Clients depend on the split,
+ * so keep new branches on the right side of it:
+ *
+ *   401  Authentication failed. There is no usable identity: no header, a
+ *        malformed, expired, revoked or unverifiable token, or a token whose
+ *        role claim cannot be trusted. The caller must sign in again.
+ *   403  Authentication succeeded and the identity is established, but this
+ *        account may not perform this action: wrong role, insufficient access
+ *        level, or a read-only account. Signing in again changes nothing.
+ *   503  Verification could not be completed (e.g. the account lookup failed).
+ *        The caller should retry, not sign out.
+ *
+ * Before this was enforced, a dead token and a permission refusal both
+ * returned 403, so clients could only tell them apart by string-matching the
+ * message. The mobile client treated any 403 as a dead session, which turned
+ * one back-office permission error into a sign-out loop for every user.
+ */
 export const authenticateJWT = async (
   req: AuthenticatedRequest,
   res: Response,
@@ -48,8 +66,12 @@ export const authenticateJWT = async (
     // from the lookup verification already performs (no additional query).
     const { payload, account } = await TokenUtil.verifyUserTokenWithAccount(token);
 
+    // 401, not 403: the token itself is unusable, so this is an
+    // authentication failure. 403 would tell the client "you are signed in
+    // but not allowed", and it would keep presenting a token that can never
+    // work. See the status contract above authenticateJWT.
     if (!isUserTokenRole(payload.role) || account.role !== payload.role) {
-      return res.status(403).json({
+      return res.status(401).json({
         success: false,
         message: "Token missing role information.",
       });
@@ -73,7 +95,11 @@ export const authenticateJWT = async (
     if (!(err instanceof InvalidTokenError)) {
       return res.status(503).json({ success: false, message: 'Authentication temporarily unavailable' });
     }
-    return res.status(403).json({
+    // 401, not 403: verification failed, so there is no authenticated
+    // identity to refuse anything to. The message string is deliberately
+    // unchanged -- clients string-match it today (see B19), so this release
+    // moves the status only.
+    return res.status(401).json({
       success: false,
       message: "Invalid or expired token.",
     });
