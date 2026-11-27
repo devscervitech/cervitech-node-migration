@@ -2,8 +2,59 @@ import { CustomException } from '../../utils/customException';
 import { logger } from '../../utils/logger';
 import AppUser from '../../models/AppUser';
 import { AppUserViewModel, toAppUserViewModel } from '../../viewmodels/AppUser.viewmodel';
+import { getLatestGoal } from '../goalLookup.service';
+
+/** The login response's `data` object, minus the token the caller already holds. */
+export type OwnProfile = AppUserViewModel & {
+  notificationCount: number;
+  currentTargetedAverageNeckAngle: number;
+};
 
 export class GetUserDataService {
+
+  /**
+   * The authenticated caller's own record.
+   *
+   * Shaped to match the login response's `data` object (AuthService
+   * .authenticatev1) so a client can refresh its session state from one
+   * endpoint without a second mapping. `token` is deliberately omitted: the
+   * caller already presented one, and re-issuing it here would mean a read
+   * endpoint silently extended a session.
+   *
+   * `currentTargetedAverageNeckAngle` is read from the latest goal, NOT from
+   * the denormalized AppUser.currentTargetedAverageNeckAngle field that
+   * getById and getByEmail return. Those two sources disagree (see B8), and
+   * login uses the goal-derived value -- so that is the one the app already
+   * renders after sign-in. Returning the stored field here would make a
+   * refresh change the number on screen with no user action behind it.
+   *
+   * Callers must pass the id from the verified token, never from a request
+   * parameter: that is the whole point of the /me namespace.
+   */
+  static async getOwnProfile(id: string): Promise<OwnProfile> {
+    try {
+      const user = await AppUser.findById(id).exec();
+
+      if (!user) {
+        throw new CustomException('Your account could not be found.');
+      }
+
+      const latestGoal = await getLatestGoal(String(user._id));
+
+      return {
+        ...toAppUserViewModel(user),
+        notificationCount: user.notificationCount ?? 0,
+        currentTargetedAverageNeckAngle: latestGoal?.targetedAverageNeckAngle ?? 0,
+      };
+    } catch (error) {
+      if (error instanceof CustomException) {
+        logger.error(error);
+        throw error;
+      }
+      logger.error('Unexpected error while retrieving the authenticated user:', error);
+      throw new Error('Internal server error');
+    }
+  }
 
   static async getByEmail(
     email: string

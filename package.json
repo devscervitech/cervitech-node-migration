@@ -16,6 +16,7 @@
     "test:file": "vitest run",
     "audit:backoffice-passwords": "tsx scripts/audit-backoffice-passwords.ts",
     "migrate:backoffice-access-levels": "tsx scripts/migrate-backoffice-access-levels.ts",
+    "migrate:app-user-prompt": "tsx scripts/migrate-app-user-prompt.ts",
     "bootstrap:backoffice-admin": "tsx scripts/bootstrap-backoffice-admin.ts"
   },
   "repository": "https://github.com/Vhickjr/cervitech-node-migration.git",
@@ -66,6 +67,6 @@
     "gaxios": "^7.3.1"
   },
   "engines": {
-    "node": "^24.0.0"
+    "node": "^22.x"
   }
 }

@@ -65,6 +65,36 @@ const definition: swaggerJSDoc.OAS3Definition = {
       BackofficeForgotPasswordRequest: fromJoi(backofficeForgotPasswordSchema),
       BackofficeVerifyResetOtpRequest: fromJoi(backofficeVerifyResetOtpSchema),
       BackofficeResetPasswordRequest: fromJoi(backofficeResetPasswordSchema),
+      // The app user's own record, as returned by GET /users/me. This is the
+      // same shape as the login response's `data` object, minus `token`, so a
+      // client can use one mapping for both.
+      AppUserProfile: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          username: { type: 'string' },
+          email: { type: 'string', format: 'email' },
+          firstName: { type: 'string' },
+          lastName: { type: 'string' },
+          hasPaid: { type: 'boolean' },
+          pictureUrl: { type: 'string' },
+          fcmToken: { type: 'string' },
+          isGoalOn: { type: 'boolean' },
+          allowPushNotifications: { type: 'boolean' },
+          responseRate: { type: 'number' },
+          dateRegistered: { type: 'string', format: 'date-time' },
+          lastLoginDateTime: { type: 'string', format: 'date-time' },
+          mobileChannel: { type: 'string' },
+          prompt: { type: 'integer' },
+          notificationCount: { type: 'integer' },
+          deleted: { type: 'boolean' },
+          currentTargetedAverageNeckAngle: {
+            type: 'number',
+            description:
+              'Taken from the latest goal, matching the login response. Not the denormalized AppUser field returned by the back-office reads.',
+          },
+        },
+      },
       ApiSuccessResponse: {
         type: 'object',
         properties: {
